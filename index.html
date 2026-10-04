@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Twin Finder</title>
+<style>
+:root{--ink:#111;--mute:#6b7280;--line:#e5e7eb;--soft:#f3f4f6;--c-classical:#f59e0b;--c-bht:#2563eb;--c-walk:#059669}
+*{box-sizing:border-box}
+html{background:#fff}
+body{margin:0;background:#fff;color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:880px;margin:0 auto;padding:44px 20px 140px}
+h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+.tag{color:var(--mute);margin:0 0 28px}
+h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);margin:0 0 14px;font-weight:700}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+/* controls */
+.controls{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:10px}
+input[type=text]{flex:1 1 260px;font:inherit;padding:13px 16px;border:2px solid var(--ink);border-radius:12px;background:#fff;outline:none;transition:transform .2s}
+input[type=text]:focus{transform:translateY(-1px)}
+button{font:inherit;cursor:pointer;border:2px solid var(--ink);background:#fff;color:var(--ink);border-radius:12px;padding:11px 16px;transition:transform .15s,background .2s,color .2s,opacity .2s}
+button:hover{transform:translateY(-2px)}
+button:active{transform:translateY(0)}
+button.go{background:var(--ink);color:#fff;padding:13px 26px;font-weight:700}
+button:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.chips{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px}
+.chips .lab{color:var(--mute);margin-right:4px;font-size:14px}
+.chip{padding:6px 12px;border-radius:999px;border-width:1.5px;font-size:14px}
+.chip.sel{background:var(--ink);color:#fff}
+
+/* stages */
+.stage{opacity:0;transform:translateY(18px);transition:opacity .6s ease,transform .6s cubic-bezier(.2,.8,.2,1);margin-top:38px}
+.stage.in{opacity:1;transform:none}
+.hidden{display:none}
+
+/* thinking */
+.think{display:flex;align-items:center;gap:14px;font-size:18px}
+.dots{display:flex;gap:6px}
+.dots i{width:10px;height:10px;border-radius:50%;background:var(--ink);animation:bounce 1s ease-in-out infinite}
+.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
+@keyframes bounce{0%,100%{transform:translateY(0);opacity:.35}50%{transform:translateY(-8px);opacity:1}}
+.bar{height:10px;background:var(--soft);border-radius:99px;overflow:hidden;position:relative;margin-top:14px}
+.bar .fill{height:100%;background:var(--ink);border-radius:99px}
+.bar.moving .fill{width:30%;animation:slide 1.1s ease-in-out infinite alternate}
+@keyframes slide{from{transform:translateX(0)}to{transform:translateX(233%)}}
+
+/* password -> number */
+.chars{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 14px}
+.ch{border:2px solid var(--ink);border-radius:10px;padding:4px 10px;text-align:center;opacity:0;transform:translateY(-14px) scale(.8);transition:all .4s cubic-bezier(.2,.9,.3,1.3)}
+.ch.in{opacity:1;transform:none}
+.ch b{display:block;font-size:20px}.ch small{color:var(--mute)}
+.bignum{font-size:34px;font-weight:800;letter-spacing:-.02em}
+
+/* hash steps */
+.step{border:2px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:12px;opacity:0;transform:translateX(-22px);transition:all .55s cubic-bezier(.2,.8,.2,1)}
+.step.in{opacity:1;transform:none;border-color:var(--ink)}
+.step .t{font-weight:700}
+.step .f{color:var(--mute);font-size:14px;margin:2px 0 10px}
+.io{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;align-items:center}
+.io .l{color:var(--mute);font-size:13px}
+.bits{display:flex;flex-wrap:wrap;gap:3px;align-items:center}
+.bit{width:17px;height:24px;border-radius:5px;background:var(--soft);color:transparent;font:700 12px/24px ui-monospace,Menlo,monospace;text-align:center;transition:background .25s,color .25s}
+.bit.on{background:var(--ink);color:#fff}
+.bit.pop{animation:pop .35s ease}
+@keyframes pop{0%{transform:scaleY(1)}50%{transform:scaleY(1.35)}100%{transform:scaleY(1)}}
+.dec{font-size:14px;color:var(--mute);margin-left:8px}
+.fp{border:2px solid var(--ink);border-radius:14px;padding:16px;margin-top:6px;opacity:0;transform:scale(.96);transition:all .6s cubic-bezier(.2,.9,.3,1.2)}
+.fp.in{opacity:1;transform:none}
+.fp .bit.on{background:#7c3aed}
+
+/* race */
+.note{color:var(--mute);font-size:14px;margin:-6px 0 14px}
+#lanes{position:relative}
+.lane{border:2px solid var(--line);border-radius:16px;padding:16px 18px;margin-bottom:14px;background:#fff;transition:border-color .3s}
+.lane.done{border-color:var(--c)}
+.lane.click{cursor:pointer}
+.lane.click:hover{border-color:var(--c)}
+.head{display:flex;align-items:center;gap:12px}
+.dot{width:14px;height:14px;border-radius:50%;background:var(--c);flex:none}
+.head .nm{font-size:18px;font-weight:800}
+.head .sub{color:var(--mute);font-size:14px}
+.rank{margin-left:auto;font-weight:800;background:var(--c);color:#fff;border-radius:99px;padding:2px 12px;font-size:14px;opacity:0;transform:scale(.4);transition:all .5s cubic-bezier(.2,.9,.3,1.4)}
+.rank.in{opacity:1;transform:none}
+.chev{font-size:24px;color:var(--mute);transition:transform .35s;opacity:0}
+.lane.click .chev{opacity:1}
+.lane.open .chev{transform:rotate(90deg)}
+.track{height:14px;background:var(--soft);border-radius:99px;margin:14px 0 8px;overflow:hidden}
+.fillbar{height:100%;width:0;background:var(--c);border-radius:99px}
+.stats{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:15px;color:var(--mute)}
+.stats b{color:var(--ink);font-variant-numeric:tabular-nums}
+.status{margin-left:auto;font-weight:600;color:var(--c)}
+.result{display:grid;grid-template-rows:0fr;transition:grid-template-rows .5s ease}
+.result.in{grid-template-rows:1fr}
+.result>div{overflow:hidden}
+.twins{display:flex;align-items:center;gap:14px;margin-top:14px;font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
+.twins .eq{color:var(--c)}
+.twinline{color:var(--mute);font-size:14px}
+.cpu{color:var(--mute);font-size:13px;margin-top:2px}
+.details{display:grid;grid-template-rows:0fr;transition:grid-template-rows .5s cubic-bezier(.2,.8,.2,1)}
+.lane.open .details{grid-template-rows:1fr}
+.details>.inner{overflow:hidden}
+.panel{border-top:2px solid var(--line);margin-top:16px;padding-top:16px;cursor:default}
+.panel h3{margin:18px 0 6px;font-size:16px}
+.panel p{margin:6px 0}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:12px 0}
+.fact{background:var(--soft);border-radius:12px;padding:10px 12px}
+.fact b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.fact span{color:var(--mute);font-size:13px}
+.pulse{height:70px;background:var(--soft);border-radius:12px;animation:pulse 1.1s ease-in-out infinite alternate;display:flex;align-items:center;justify-content:center;color:var(--mute)}
+@keyframes pulse{from{opacity:.4}to{opacity:1}}
+.chart{display:flex;align-items:flex-end;gap:10px;height:170px;border-bottom:2px solid var(--ink);padding:0 4px;margin-top:10px}
+.col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;position:relative}
+.pair{display:flex;align-items:flex-end;gap:3px;height:100%;width:100%;justify-content:center}
+.b{width:42%;max-width:26px;border-radius:5px 5px 0 0;height:0;transition:height .7s cubic-bezier(.2,.8,.2,1)}
+.b.perfect{background:#d1d5db}.b.mist{background:var(--c)}
+.xl{display:flex;gap:10px;padding:4px 4px 0;color:var(--mute);font-size:12px}
+.xl span{flex:1;text-align:center}
+.legend{display:flex;gap:16px;font-size:13px;color:var(--mute);margin:6px 0}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.sum{font-weight:600;margin-top:10px;min-height:48px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Twin Finder</h1>
+  <p class="tag">Type a password. Watch it get scrambled into a fingerprint, then watch three methods race to find two different numbers with the <em>same</em> fingerprint (a "twin").</p>
+
+  <div class="controls">
+    <input id="pw" type="text" placeholder="Type any password" value="hunter2" maxlength="40" autocomplete="off" spellcheck="false">
+    <button class="go" id="run">Scramble &amp; race</button>
+  </div>
+  <div class="chips" id="sizes"><span class="lab">Number size (bits)</span></div>
+
+  <section id="s-think" class="stage hidden">
+    <div class="think"><div class="dots"><i></i><i></i><i></i></div><span id="think-txt">Thinking…</span></div>
+    <div class="bar moving"><div class="fill"></div></div>
+  </section>
+
+  <section id="s-num" class="stage hidden">
+    <h2>1 · Your password becomes a number</h2>
+    <div class="chars" id="chars"></div>
+    <div class="bignum mono" id="bignum">0</div>
+  </section>
+
+  <section id="s-hash" class="stage hidden">
+    <h2>2 · The scrambler it goes through</h2>
+    <div id="steps"></div>
+    <div class="fp" id="fp"></div>
+  </section>
+
+  <section id="s-race" class="stage hidden">
+    <h2>3 · The race: who finds a twin first?</h2>
+    <p class="note" id="race-note"></p>
+    <div id="lanes"></div>
+    <p class="note" id="final-note"></p>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const frame = () => new Promise(r => requestAnimationFrame(r));
+const bin = (v, w) => v.toString(2).padStart(w, "0");
+const COLORS = {classical: "#f59e0b", bht: "#2563eb", walk: "#059669"};
+let n = 16, busy = false, data = null;
+
+// ---------- size chips
+[4, 6, 8, 10, 12, 14, 16].forEach(v => {
+  const b = document.createElement("button");
+  b.className = "chip" + (v === n ? " sel" : ""); b.textContent = v;
+  b.onclick = () => { if (busy) return; n = v; document.querySelectorAll("#sizes .chip").forEach(c => c.classList.toggle("sel", c === b)); };
+  $("#sizes").appendChild(b);
+});
+
+function show(id) { const e = $(id); e.classList.remove("hidden"); requestAnimationFrame(() => requestAnimationFrame(() => e.classList.add("in"))); }
+function hide(id) { const e = $(id); e.classList.remove("in"); e.classList.add("hidden"); }
+
+function tween(el, from, to, ms, fmt = v => Math.round(v)) {
+  return new Promise(res => {
+    const t0 = performance.now();
+    const f = now => {
+      const k = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+      el.textContent = fmt(from + (to - from) * e);
+      k < 1 ? requestAnimationFrame(f) : res();
+    };
+    requestAnimationFrame(f);
+  });
+}
+
+function bitsRow(width) {
+  const d = document.createElement("div"); d.className = "bits";
+  for (let i = 0; i < width; i++) { const s = document.createElement("span"); s.className = "bit"; s.textContent = "0"; d.appendChild(s); }
+  return d;
+}
+async function setBits(row, val, width, stagger = 22) {
+  const s = bin(val, width);
+  for (let i = 0; i < width; i++) {
+    const el = row.children[i], on = s[i] === "1";
+    el.textContent = s[i];
+    if (el.classList.contains("on") !== on) { el.classList.toggle("on", on); el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop"); }
+    if (stagger) await sleep(stagger);
+  }
+}
+
+// ---------- main flow
+$("#run").onclick = start;
+$("#pw").addEventListener("keydown", e => { if (e.key === "Enter") start(); });
+
+async function start() {
+  const pw = $("#pw").value.trim();
+  if (!pw || busy) return;
+  busy = true; $("#run").disabled = true;
+  ["#s-num", "#s-hash", "#s-race"].forEach(hide);
+  $("#chars").innerHTML = ""; $("#steps").innerHTML = ""; $("#fp").innerHTML = ""; $("#fp").classList.remove("in");
+  $("#lanes").innerHTML = ""; $("#final-note").textContent = "";
+  show("#s-think");
+  const msgs = ["Reading your password…", "Picking a scrambler just for it…", "Warming up three finders…"];
+  let mi = 0; const ti = setInterval(() => { $("#think-txt").textContent = msgs[++mi % msgs.length]; }, 700);
+  $("#think-txt").textContent = msgs[0];
+  try {
+    const [res] = await Promise.all([fetch(`/api/run?pw=${encodeURIComponent(pw)}&n=${n}`).then(r => r.json()), sleep(1800)]);
+    if (res.error) throw new Error(res.error);
+    data = res;
+  } catch (e) { clearInterval(ti); $("#think-txt").textContent = "Something went wrong: " + e.message; busy = false; $("#run").disabled = false; return; }
+  clearInterval(ti); hide("#s-think");
+  await playNumber(); await playHash(); await playRace();
+  busy = false; $("#run").disabled = false;
+}
+
+async function playNumber() {
+  show("#s-num");
+  const box = $("#chars");
+  data.pw.split("").slice(0, 40).forEach((c, i) => {
+    const d = document.createElement("div"); d.className = "ch";
+    d.innerHTML = `<b class="mono">${c.replace("<", "&lt;")}</b><small>${data.codes[i]}</small>`; box.appendChild(d);
+  });
+  await sleep(200);
+  for (const d of box.children) { d.classList.add("in"); await sleep(120); }
+  await sleep(300);
+  await tween($("#bignum"), 0, data.x, 900);
+  await sleep(500);
+}
+
+async function playHash() {
+  show("#s-hash");
+  const h = data.hash, w = data.n, tr = h.trace;
+  const defs = [
+    ["Multiply and add", `(number × ${h.A} + ${h.C}) keep the last ${w} bits`, data.x, tr[0], w],
+    ["Mix the bits", `flip each bit using the bits ${h.s} places over`, tr[0], tr[1], w],
+    ["Multiply again", `(number × ${h.B}) keep the last ${w} bits`, tr[1], tr[2], w],
+    ["Drop the last bit", `the fingerprint is one bit shorter`, tr[2], tr[3], w - 1],
+  ];
+  for (const [title, formula, vin, vout, wout] of defs) {
+    const el = document.createElement("div"); el.className = "step";
+    const rin = bitsRow(w), rout = bitsRow(wout), dec = document.createElement("span"); dec.className = "dec mono";
+    el.innerHTML = `<div class="t">${title}</div><div class="f mono">${formula}</div><div class="io"><span class="l">in</span><div class="in-slot"></div><span class="l">out</span><div class="out-slot"></div></div>`;
+    el.querySelector(".in-slot").appendChild(rin);
+    const os = el.querySelector(".out-slot"); os.style.display = "flex"; os.style.alignItems = "center"; os.appendChild(rout); os.appendChild(dec);
+    $("#steps").appendChild(el);
+    await frame(); el.classList.add("in");
+    await setBits(rin, vin, w, 8);
+    await sleep(150);
+    tween(dec, 0, vout, 600, v => "= " + Math.round(v));
+    await setBits(rout, vout, wout, 28);
+    await sleep(250);
+  }
+  const fp = $("#fp"), fb = bitsRow(w - 1);
+  fp.innerHTML = `<h2 style="margin-bottom:8px">Your fingerprint</h2>`; fp.appendChild(fb);
+  const meta = document.createElement("div"); meta.className = "mono"; meta.style.marginTop = "8px";
+  meta.textContent = `= ${tr[3]}  (hex ${tr[3].toString(16)})`; fp.appendChild(meta);
+  fp.classList.add("in");
+  await setBits(fb, tr[3], w - 1, 35);
+  await sleep(700);
+}
+
+// ---------- race
+function laneEl(m) {
+  const el = document.createElement("div"); el.className = "lane"; el.dataset.id = m.id; el.style.setProperty("--c", COLORS[m.id]);
+  el.innerHTML = `<div class="head"><span class="dot"></span><div><div class="nm">${m.name}</div><div class="sub">${m.sub}</div></div><span class="rank"></span><span class="chev">›</span></div>
+  <div class="track"><div class="fillbar"></div></div>
+  <div class="stats"><span>Tries <b class="tries">0</b></span><span>Race time <b class="clock">0.00 s</b></span><span class="status">Searching…</span></div>
+  <div class="result"><div></div></div>
+  <div class="details"><div class="inner"><div class="panel"></div></div></div>`;
+  return el;
+}
+
+async function playRace() {
+  show("#s-race");
+  const rate = data.rate;
+  $("#race-note").textContent = `Fair race: every method makes ${rate.toFixed(0)} tries per second, so the one that needs fewer tries wins. (The quantum ones are simulated on a normal computer, so their real computer time isn't a fair comparison. It's shown afterwards.)`;
+  const box = $("#lanes");
+  const lanes = data.methods.map(m => { const el = laneEl(m); box.appendChild(el); return {m, el, fin: false, lastAtt: -1}; });
+  await sleep(500);
+  const t0 = performance.now();
+  await new Promise(done => {
+    const loop = now => {
+      const e = (now - t0) / 1000; let all = true;
+      for (const L of lanes) {
+        const {m, el} = L, total = m.total, tt = total / rate;
+        const tries = Math.min(total, e * rate); let cum = 0, att = 0;
+        for (let i = 0; i < m.attempts.length; i++) { if (tries >= cum + m.attempts[i].tries && i < m.attempts.length - 1) { cum += m.attempts[i].tries; att = i + 1; } else { att = i; break; } }
+        const A = m.attempts[att], pct = Math.min(1, (tries - cum) / A.tries);
+        el.querySelector(".fillbar").style.width = (pct * 100) + "%";
+        el.querySelector(".tries").textContent = Math.floor(tries);
+        el.querySelector(".clock").textContent = Math.min(e, tt).toFixed(2) + " s";
+        const st = el.querySelector(".status");
+        if (!L.fin) st.textContent = att > 0 ? `Try again (attempt ${att + 1})` : "Searching…";
+        if (e >= tt && !L.fin) { L.fin = true; L.finTime = tt; finishLane(L); }
+        if (!L.fin) all = false;
+      }
+      all ? done() : requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+  });
+  await sleep(900);
+  await rankLanes(lanes);
+}
+
+function finishLane({m, el}) {
+  el.classList.add("done");
+  el.querySelector(".fillbar").style.width = "100%";
+  el.querySelector(".status").textContent = m.attempts.length > 1 ? `Found a twin (${m.attempts.length} attempts)` : "Found a twin";
+  const w = data.n - 1;
+  const r = el.querySelector(".result"); r.firstElementChild.innerHTML =
+    `<div class="twins mono"><span>${m.pair[0]}</span><span class="eq">=</span><span>${m.pair[1]}</span></div>
+     <div class="twinline">Two different numbers, same fingerprint <span class="mono">${bin(m.digest, w)}</span> ✓</div>
+     <div class="cpu">Actual computer time: ${m.cpu_ms < 1 ? m.cpu_ms.toFixed(2) : m.cpu_ms.toFixed(1)} ms</div>`;
+  r.classList.add("in");
+}
+
+async function rankLanes(lanes) {
+  const sorted = [...lanes].sort((a, b) => a.m.total - b.m.total || a.finTime - b.finTime);
+  const box = $("#lanes"), before = new Map(lanes.map(L => [L.el, L.el.getBoundingClientRect().top]));
+  sorted.forEach(L => box.appendChild(L.el));
+  for (const L of sorted) {
+    const dy = before.get(L.el) - L.el.getBoundingClientRect().top;
+    L.el.style.transition = "none"; L.el.style.transform = `translateY(${dy}px)`;
+  }
+  await frame();
+  sorted.forEach(L => { L.el.style.transition = "transform .9s cubic-bezier(.2,.8,.2,1)"; L.el.style.transform = ""; });
+  await sleep(300);
+  const names = ["1st", "2nd", "3rd"];
+  for (let i = 0; i < sorted.length; i++) {
+    const rk = sorted[i].el.querySelector(".rank"); rk.textContent = `${names[i]} · ${sorted[i].m.total} tries`; rk.classList.add("in");
+    sorted[i].el.classList.add("click");
+    sorted[i].el.onclick = ev => { if (ev.target.closest(".panel")) return; toggle(sorted[i]); };
+    await sleep(200);
+  }
+  $("#final-note").textContent = "Ranked by fewest tries. Quantum methods can miss and retry, so results vary run to run. Click a row to see how it works and what happens when a quantum computer makes mistakes.";
+}
+
+// ---------- details
+async function toggle(L) {
+  const el = L.el, open = !el.classList.contains("open");
+  document.querySelectorAll(".lane.open").forEach(x => x.classList.remove("open"));
+  if (!open) return;
+  el.classList.add("open");
+  if (L.loaded) return; L.loaded = true;
+  const panel = el.querySelector(".panel"), id = L.m.id;
+  panel.innerHTML = `<div class="pulse">Loading details…</div>`;
+  const d = await fetch(`/api/details?method=${id}&n=${data.n}`).then(r => r.json());
+  panel.innerHTML = detailsHTML(id, d, L.m);
+  if (id !== "classical") loadNoise(L, panel);
+}
+
+const fmt = v => v.toLocaleString("en-US");
+function detailsHTML(id, d, m) {
+  if (id === "classical") return `
+    <p><b>How it works.</b> Pick a random number, work out its fingerprint, write it down. Repeat. As soon as a fingerprint repeats, you hold a twin.</p>
+    <div class="facts"><div class="fact"><b>${m.total}</b><span>tries this run</span></div><div class="fact"><b>~${Math.round(d.expected)}</b><span>tries on average</span></div><div class="fact"><b>√${fmt(data.N)}</b><span>rough rule: grows like the square root of the number of possible numbers</span></div></div>
+    <h3>What if it makes mistakes?</h3><p>A normal computer practically never flips a bit by accident, so there is nothing to simulate here. That reliability is its big advantage over quantum computers today.</p>`;
+  if (id === "bht") return `
+    <p><b>How it works.</b> (1) Write down fingerprints for ${d.r} random numbers, your <em>list</em>. (2) Every number whose twin is in your list is a winner, and there are exactly ${d.k} of them hiding among ${fmt(data.N)}. (3) A quantum search nudges the odds, step by step, so the winners become far more likely to be picked when you look, in about ${d.j} steps instead of thousands.</p>
+    <div class="facts">
+      <div class="fact"><b>${d.r + d.j + 1}</b><span>tries per attempt (${d.r} list + ${d.j} search steps + 1 check)</span></div>
+      <div class="fact"><b>${(d.p * 100).toFixed(0)}%</b><span>chance one attempt works</span></div>
+      <div class="fact"><b>${d.qubits}</b><span>quantum bits needed</span></div>
+      <div class="fact"><b>${fmt(d.total_gates)}</b><span>basic operations in the full program</span></div>
+      <div class="fact"><b>${fmt(d.total_cx)}</b><span>of those are the error-prone two-bit kind</span></div>
+    </div>
+    <p style="color:var(--mute);font-size:14px">Size comes from compiling one search step with Qiskit into basic operations and multiplying by ${d.j} steps. This simple version has no tricks to shrink the program.</p>
+    <h3>What if the quantum computer makes mistakes?</h3><div class="noise"><div class="pulse">Simulating a noisy quantum computer…</div></div>`;
+  return `
+    <p><b>How it works.</b> Imagine a list of ${d.r} numbers. The quantum walk wanders from list to list, swapping one number at a time, while quantum effects push it toward lists that contain a twin. After ${d.K} rounds of ${d.t} wandering steps you look, and with ${(d.p * 100).toFixed(0)}% chance the list has a twin in it.</p>
+    <div class="facts">
+      <div class="fact"><b>${d.queries}</b><span>tries per attempt</span></div>
+      <div class="fact"><b>${d.steps}</b><span>wandering steps (${d.K} rounds × ${d.t})</span></div>
+      <div class="fact"><b>${(d.p * 100).toFixed(0)}%</b><span>chance one attempt works</span></div>
+      <div class="fact"><b>~${fmt(d.qubits_est)}</b><span>quantum bits, rough estimate</span></div>
+    </div>
+    <p style="color:var(--mute);font-size:14px">This one is a mathematical simulation of the walk, not a compiled program, so there is no exact operation count. The quantum-bit number is a rough estimate to show how much memory it needs.</p>
+    <h3>What if the quantum computer makes mistakes?</h3><div class="noise"><div class="pulse">Simulating mistakes…</div></div>`;
+}
+
+async function loadNoise(L, panel) {
+  const id = L.m.id, slot = panel.querySelector(".noise");
+  const d = await fetch(`/api/noise?method=${id}&n=${data.n}&pw=${encodeURIComponent(data.pw)}`).then(r => r.json());
+  const c = COLORS[id], isB = id === "bht";
+  const labels = isB ? d.steps : d.rounds;
+  const intro = isB
+    ? `Shown on a smaller ${d.n_sim}-bit version (a bigger one would take too long to simulate). Each operation has a small chance of going wrong. Pick how often:`
+    : `A simple model: every wandering step has a small chance of a random slip that scrambles the list. Pick how often:`;
+  slot.innerHTML = `<p>${intro}</p><div class="chips"></div>
+    <div class="legend">${isB ? `<span><i style="background:#d1d5db"></i>perfect machine</span>` : ""}<span><i style="background:${c}"></i>${isB ? "machine with mistakes" : "chance a twin is found"}</span></div>
+    <div class="chart"></div><div class="xl"></div><div class="sum"></div>
+    <p style="color:var(--mute);font-size:14px">${isB ? "Steps of the quantum search →" : "Rounds of the walk →"}</p>`;
+  const chart = slot.querySelector(".chart"), xl = slot.querySelector(".xl"), sum = slot.querySelector(".sum"), chips = slot.querySelector(".chips");
+  labels.forEach((l, i) => {
+    const col = document.createElement("div"); col.className = "col";
+    col.innerHTML = `<div class="pair">${isB ? '<div class="b perfect"></div>' : ""}<div class="b mist"></div></div>`; chart.appendChild(col);
+    const s = document.createElement("span"); s.textContent = l; xl.appendChild(s);
+  });
+  chart.style.setProperty("--c", c); slot.style.setProperty("--c", c);
+  const apply = rate => {
+    const vals = d.noisy[String(rate)], cols = chart.children;
+    for (let i = 0; i < cols.length; i++) {
+      if (isB) cols[i].querySelector(".perfect").style.height = (d.ideal[i] * 100) + "%";
+      cols[i].querySelector(".mist").style.height = (vals[i] * 100) + "%";
+    }
+    const best = Math.max(...vals), bi = vals.indexOf(best);
+    if (isB) {
+      const bp = Math.max(...d.ideal);
+      sum.textContent = rate === 0 ? `Perfect machine: best chance of finding a twin is ${(bp * 100).toFixed(0)}%, at step ${d.steps[d.ideal.indexOf(bp)]}.`
+        : `With mistakes, the best chance drops from ${(bp * 100).toFixed(0)}% to ${(best * 100).toFixed(0)}%, and more steps make it worse, because every step adds more mistakes. (Plain guessing on this size would score ${(d.ideal[0] * 100).toFixed(0)}%.)`;
+    } else {
+      const clean = d.noisy["0"][d.noisy["0"].length - 1], last = vals[vals.length - 1];
+      sum.textContent = rate === 0 ? `Perfect machine: ${(clean * 100).toFixed(0)}% chance of a twin after ${labels[labels.length - 1]} rounds.`
+        : `With mistakes, the final chance drops from ${(clean * 100).toFixed(0)}% to ${(last * 100).toFixed(0)}%. The longer the walk, the more slips pile up.`;
+    }
+  };
+  d.rates.forEach((r, i) => {
+    const b = document.createElement("button"); b.className = "chip" + (i === 0 ? " sel" : "");
+    b.textContent = r === 0 ? "No mistakes" : (r * 100).toFixed(r < 0.01 ? 2 : 1).replace(/\.?0+$/, "") + "% error";
+    b.onclick = () => { chips.querySelectorAll(".chip").forEach(x => x.classList.toggle("sel", x === b)); apply(r); };
+    chips.appendChild(b);
+  });
+  await frame(); await sleep(60); apply(d.rates[0]);
+}
+</script>
+</body>
+</html>
