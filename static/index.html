@@ -128,7 +128,8 @@ button:disabled{opacity:.4;cursor:not-allowed;transform:none}
 .legend{display:flex;gap:16px;font-size:13px;color:var(--mute);margin:6px 0}
 .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
 .sum{font-weight:600;margin-top:10px;min-height:48px}
-.gate{display:flex;justify-content:center;margin:26px 0 0}
+.gate{display:flex;justify-content:center;margin:26px 0 0;position:sticky;bottom:18px;z-index:5}
+.gate button{box-shadow:0 6px 24px rgba(0,0,0,.25)}
 .gate button{font-weight:700;background:var(--ink);color:#fff;padding:12px 26px}
 .stage>h2{cursor:pointer;user-select:none}
 .stage>h2:after{content:" ▾";opacity:.5}
@@ -161,6 +162,8 @@ button:disabled{opacity:.4;cursor:not-allowed;transform:none}
   <div class="chips" id="sizes"><span class="lab">Number size (bits)</span></div>
   <p class="note" style="margin:2px 0 0">Bits = how big the numbers are. 4 bits means 16 possible numbers, 8 bits 256, 16 bits 65,536. Bigger means harder to search, and the quantum advantage grows.</p>
 
+  <div class="glossary"><b>Words used here.</b> <b>Scrambler = hash function</b> (same thing, two names): a fixed recipe that turns a number into a shorter number. <b>Fingerprint = hash = digest</b>: what comes out. <b>Twin / collision</b>: two <i>different</i> numbers whose fingerprints are <i>equal</i>. Your password is first turned into a number <i>x</i>; the scrambler then turns <i>x</i> into a fingerprint. <b>x and its fingerprint are an input and an output, not a pair.</b> After each step the page waits for you: click the black button at the bottom of the screen to continue.</div>
+  <div class="gate" id="g1"></div>
   <section id="s-think" class="stage hidden">
     <div class="think"><div class="dots"><i></i><i></i><i></i></div><span id="think-txt">Thinking…</span></div>
     <div class="bar moving"><div class="fill"></div></div>
@@ -262,10 +265,10 @@ async function setBits(row, val, width, stagger = 22) {
 // ---------- step gating: each step waits for your click
 function gate(id, label) {
   return new Promise(res => {
-    const g = $(id), b = document.createElement("button");
+    let g = $(id); if (!g) { g = document.createElement("div"); g.className = "gate"; g.id = id.slice(1); document.querySelector("main").appendChild(g); }
+    const b = document.createElement("button");
     b.textContent = label; g.innerHTML = ""; g.appendChild(b);
     b.onclick = () => { g.innerHTML = ""; res(); };
-    b.scrollIntoView({behavior: "smooth", block: "center"});
   });
 }
 document.addEventListener("click", e => {
@@ -294,14 +297,17 @@ async function start() {
     data = res;
   } catch (e) { clearInterval(ti); $("#think-txt").textContent = "Something went wrong: " + e.message; busy = false; $("#run").disabled = false; return; }
   clearInterval(ti); hide("#s-think");
+  try {
   await gate("#g1", "Step 1 ▸ Turn the password into a number");
-  await playNumber();
-  await gate("#g2", "Step 2 ▸ Run that number through the scrambler");
-  await playHash();
-  await gate("#g3", "Step 3 ▸ Start the race for a twin");
-  await playRace();
-  await gate("#g4", "Step 4 ▸ Check the answers by scrambling them again");
-  await playVerify();
+    await playNumber();
+    await gate("#g2", "Step 2 ▸ Run that number through the scrambler");
+    await playHash();
+    await gate("#g3", "Step 3 ▸ Start the race for a twin");
+    await playRace();
+    await gate("#g4", "Step 4 ▸ Check the answers by scrambling them again");
+    await playVerify();
+
+  } catch (e) { console.error(e); const t = $("#think-txt"); show("#s-think"); t.textContent = "Something broke: " + e.message; }
   busy = false; $("#run").disabled = false;
 }
 
