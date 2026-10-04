@@ -14,6 +14,19 @@ from bht_collision import grover_circuit
 from hash_circuit import constants, hash_py
 
 
+def load_env(path=".env"):
+    """Tiny .env reader (KEY=value lines). Real environment variables win."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for p in (path, os.path.join(here, ".env")):
+        if os.path.exists(p):
+            for line in open(p, encoding="utf-8"):
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.replace("export ", "").strip(), v.strip().strip("'\""))
+            return
+
+
 def fold(pw, n):
     x = 0
     for b in pw.encode():
@@ -40,7 +53,14 @@ def main():
     from qiskit import transpile
     if a.real:
         from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
-        svc = QiskitRuntimeService(token=os.environ.get("QISKIT_IBM_TOKEN")) if os.environ.get("QISKIT_IBM_TOKEN") else QiskitRuntimeService()
+        load_env()
+        token = next((os.environ[k] for k in ("QISKIT_IBM_TOKEN", "IBM_QUANTUM_TOKEN", "IBM_TOKEN", "IBM_API_KEY") if os.environ.get(k)), None)
+        inst = os.environ.get("QISKIT_IBM_INSTANCE") or os.environ.get("IBM_INSTANCE")  # optional
+        print("token found in .env/environment" if token else "no token found: trying a saved IBM account")
+        kw = {"token": token} if token else {}
+        if inst:
+            kw["instance"] = inst
+        svc = QiskitRuntimeService(**kw)
         be = svc.backend(a.backend) if a.backend else svc.least_busy(operational=True, simulator=False, min_num_qubits=n)
         isa = [transpile(q, be, optimization_level=3) for q in circs]
         sam = SamplerV2(mode=be)

@@ -1,0 +1,38 @@
+{
+ "pw": "hunter2",
+ "n": 3,
+ "x": 2,
+ "fingerprint": 2,
+ "twin": 4,
+ "backend": "model of IBM Sherbrooke (simulated noise, NOT a real run)",
+ "real": false,
+ "shots": 4000,
+ "steps": [
+  0,
+  1,
+  2,
+  3,
+  4
+ ],
+ "ideal": [
+  0.12499999999999997,
+  0.7812499999999999,
+  0.9453125000000001,
+  0.330078125,
+  0.012207031249999894
+ ],
+ "measured": [
+  0.1225,
+  0.692,
+  0.74175,
+  0.278,
+  0.06975
+ ],
+ "two_qubit_gates": [
+  0,
+  19,
+  37,
+  59,
+  77
+ ]
+}

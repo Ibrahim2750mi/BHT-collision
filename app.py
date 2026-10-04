@@ -684,6 +684,14 @@ def api_prepare():
                    rate=_rate(H.N, mode, speed), methods=_meta(mode))
 
 
+@app.get("/api/ibm")
+def api_ibm():
+    p = Path(__file__).resolve().parent / "ibm_results.json"
+    if not p.exists():
+        return jsonify(error="No chip result yet. Run: python ibm_run.py --fake   (or --real)"), 404
+    return Response(p.read_text(), mimetype="application/json")
+
+
 @app.get("/api/cost")
 def api_cost():
     p = Path(__file__).resolve().parent / "cost_table.json"

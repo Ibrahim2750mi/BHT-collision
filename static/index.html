@@ -393,7 +393,7 @@ const pick = (r, id) => id === "q" ? (r.ms.bht || r.ms.grover) : r.ms[id];
 function showSection(title, html) { $("#table-h").textContent = title; $("#tbox").innerHTML = html; show("#s-table"); $("#s-table").classList.remove("collapsed"); $("#s-table").scrollIntoView({behavior: "smooth", block: "start"}); }
 function showMenu() {
   const g = $("#g5"); g.innerHTML = "";
-  [["Table of all my runs", showRuns], ["What it would really cost", showCost]].forEach(([l, f]) => { const b = document.createElement("button"); b.textContent = l; b.onclick = f; g.appendChild(b); });
+  [["Table of all my runs", showRuns], ["What it would really cost", showCost], ["Real chip result", showIbm]].forEach(([l, f]) => { const b = document.createElement("button"); b.textContent = l; b.onclick = f; g.appendChild(b); });
 }
 $("#tbl").onclick = showRuns;
 function showRuns() {
@@ -439,6 +439,19 @@ async function showCost() {
   <table class="tbl"><tr><th>Bits</th><th>Normal: tries</th><th>Normal: hard steps</th><th>Quantum: list size / steps</th><th>Quantum: hard steps</th><th>Quantum ÷ Normal</th><th>Max slowdown it can afford</th><th>Quantum wander (at least)</th><th>Quantum search with the textbook list size</th></tr>${B}</table>
   <p class="note"><b>Two findings.</b> (1) For "twin of my password", the quantum search wins hugely, and more at bigger sizes (the √ speed-up is real). (2) For "any twin", the famous cube-root speed-up <b>mostly disappears</b>: checking a long list costs real steps, so the cheapest list is short, and the gain shrinks to a small constant (about ${(1 / d.rows[d.rows.length - 1].race.ratio).toFixed(0)}× at the biggest size). The red column shows the cost if you use the textbook list size instead. "Quantum wander" is only a lower bound, because moving numbers around inside the walk is not counted.</p>
   <p class="note">Method: adder-by-adder count of our own circuit (a cleverer design may shrink every number; we did not try). Error correction and the slowness of real quantum hardware are not included.</p>`);
+}
+
+async function showIbm() {
+  const T = "5 · Real quantum chip vs a perfect machine";
+  showSection(T, "<div class='pulse'>Loading…</div>");
+  const d = await fetch("/api/ibm").then(r => r.json());
+  if (d.error) return showSection(T, `<p class='note'>${esc(d.error)}</p>`);
+  const g = 1 / 2 ** d.n, bar = (v, c) => `<div style="background:var(--soft);border-radius:6px;width:220px;height:14px;display:inline-block;vertical-align:middle"><div style="background:${c};width:${(v * 100).toFixed(1)}%;height:100%;border-radius:6px"></div></div>`;
+  const rows = d.steps.map((j, i) => `<tr><td>${j}</td><td>${bar(d.ideal[i], "#9ca3af")} ${(d.ideal[i] * 100).toFixed(1)}%</td><td>${bar(d.measured[i], "#2563eb")} ${(d.measured[i] * 100).toFixed(1)}%</td><td>${d.two_qubit_gates[i]}</td></tr>`).join("");
+  const bi = d.ideal.indexOf(Math.max(...d.ideal)), bm = d.measured.indexOf(Math.max(...d.measured));
+  showSection(T, `<p><b>${d.real ? "Real chip run" : "NOT a real chip: a noisy computer model of one"}</b>: ${esc(d.backend)}. The task: password <span class="mono">${esc(d.pw)}</span> becomes number <span class="mono">${d.x}</span> (${d.n} bits), fingerprint <span class="mono">${d.fingerprint}</span>. Find its one twin, <span class="mono">${d.twin}</span>, out of ${2 ** d.n} numbers. Pure guessing succeeds ${(g * 100).toFixed(1)}% of the time. ${d.shots} shots per row.</p>
+  <table class="tbl"><tr><th>Search steps</th><th>Perfect machine: chance of finding the twin</th><th>Measured: chance of finding the twin</th><th>Two-qubit gates used</th></tr>${rows}</table>
+  <p class="note">A perfect machine peaks at ${(d.ideal[bi] * 100).toFixed(0)}% after ${bi} steps. The measured result peaks at ${(d.measured[bm] * 100).toFixed(0)}% after ${bm} steps. More steps use more gates, every gate makes mistakes, so past the peak the answer gets worse. To change this result, run <span class="mono">python ibm_run.py --real</span> and reload.</p>`);
 }
 
 // ---------- step 4: re-scramble the answers
