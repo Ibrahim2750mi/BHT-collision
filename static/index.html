@@ -93,7 +93,7 @@ button:disabled{opacity:.4;cursor:not-allowed;transform:none}
 .result{display:grid;grid-template-rows:0fr;transition:grid-template-rows .5s ease}
 .result.in{grid-template-rows:1fr}
 .result>div{overflow:hidden}
-.twins{display:flex;align-items:center;gap:14px;margin-top:14px;font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
+.twins{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin-top:14px;font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
 .twins .eq{color:var(--c)}
 .twinline{color:var(--mute);font-size:14px}
 .cpu{color:var(--mute);font-size:13px;margin-top:2px}
@@ -130,7 +130,10 @@ button:disabled{opacity:.4;cursor:not-allowed;transform:none}
     <input id="pw" type="text" placeholder="Type any password" value="hunter2" maxlength="40" autocomplete="off" spellcheck="false">
     <button class="go" id="run">Scramble &amp; race</button>
   </div>
+  <div class="chips" id="modes"><span class="lab">What to do</span></div>
+  <div class="chips" id="kinds"><span class="lab">Password type</span></div>
   <div class="chips" id="sizes"><span class="lab">Number size (bits)</span></div>
+  <p class="note" style="margin:2px 0 0">Bits = how big the numbers are. 4 bits means 16 possible numbers, 8 bits 256, 16 bits 65,536. Bigger means harder to search, and the quantum advantage grows.</p>
 
   <section id="s-think" class="stage hidden">
     <div class="think"><div class="dots"><i></i><i></i><i></i></div><span id="think-txt">Thinking…</span></div>
@@ -141,6 +144,7 @@ button:disabled{opacity:.4;cursor:not-allowed;transform:none}
     <h2>1 · Your password becomes a number</h2>
     <div class="chars" id="chars"></div>
     <div class="bignum mono" id="bignum">0</div>
+    <p class="note" id="num-note" style="margin:6px 0 0"></p>
   </section>
 
   <section id="s-hash" class="stage hidden">
@@ -150,7 +154,7 @@ button:disabled{opacity:.4;cursor:not-allowed;transform:none}
   </section>
 
   <section id="s-race" class="stage hidden">
-    <h2>3 · The race: who finds a twin first?</h2>
+    <h2 id="race-h">3 · The race: who finds a twin first?</h2>
     <p class="note" id="race-note"></p>
     <div id="lanes"></div>
     <p class="note" id="final-note"></p>
@@ -162,8 +166,9 @@ const $ = s => document.querySelector(s);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const frame = () => new Promise(r => requestAnimationFrame(r));
 const bin = (v, w) => v.toString(2).padStart(w, "0");
-const COLORS = {classical: "#f59e0b", bht: "#2563eb", walk: "#059669"};
-let n = 16, busy = false, data = null;
+const COLORS = {classical: "#f59e0b", bht: "#2563eb", grover: "#2563eb", walk: "#059669"};
+const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+let n = 16, busy = false, data = null, mode = "race", kind = "text";
 
 // ---------- size chips
 [4, 6, 8, 10, 12, 14, 16].forEach(v => {
@@ -171,6 +176,21 @@ let n = 16, busy = false, data = null;
   b.className = "chip" + (v === n ? " sel" : ""); b.textContent = v;
   b.onclick = () => { if (busy) return; n = v; document.querySelectorAll("#sizes .chip").forEach(c => c.classList.toggle("sel", c === b)); };
   $("#sizes").appendChild(b);
+});
+
+function chipRow(id, items, onPick) {
+  items.forEach(([v, l], i) => {
+    const b = document.createElement("button"); b.className = "chip" + (i === 0 ? " sel" : ""); b.textContent = l;
+    b.onclick = () => { if (busy) return; document.querySelectorAll(`#${id} .chip`).forEach(c => c.classList.toggle("sel", c === b)); onPick(v); };
+    $("#" + id).appendChild(b);
+  });
+}
+chipRow("modes", [["race", "Find any twin pair (3 methods)"], ["crack", "Crack: find another password like mine (2 methods)"]], v => mode = v);
+chipRow("kinds", [["text", "Text"], ["number", "Number (PIN)"]], v => {
+  kind = v; const p = $("#pw");
+  p.placeholder = v === "number" ? "Type digits, e.g. 4821" : "Type any password";
+  if (v === "number" && !/^\d+$/.test(p.value)) p.value = "4821";
+  if (v === "text" && /^\d+$/.test(p.value)) p.value = "hunter2";
 });
 
 function show(id) { const e = $(id); e.classList.remove("hidden"); requestAnimationFrame(() => requestAnimationFrame(() => e.classList.add("in"))); }
@@ -215,11 +235,11 @@ async function start() {
   $("#chars").innerHTML = ""; $("#steps").innerHTML = ""; $("#fp").innerHTML = ""; $("#fp").classList.remove("in");
   $("#lanes").innerHTML = ""; $("#final-note").textContent = "";
   show("#s-think");
-  const msgs = ["Reading your password…", "Picking a scrambler just for it…", "Warming up three finders…"];
+  const msgs = ["Reading your password…", "Picking a scrambler just for it…", "Warming up the finders…"];
   let mi = 0; const ti = setInterval(() => { $("#think-txt").textContent = msgs[++mi % msgs.length]; }, 700);
   $("#think-txt").textContent = msgs[0];
   try {
-    const [res] = await Promise.all([fetch(`/api/run?pw=${encodeURIComponent(pw)}&n=${n}`).then(r => r.json()), sleep(1800)]);
+    const [res] = await Promise.all([fetch(`/api/${mode === "crack" ? "crack" : "run"}?pw=${encodeURIComponent(pw)}&n=${n}&kind=${kind}`).then(r => r.json()), sleep(1800)]);
     if (res.error) throw new Error(res.error);
     data = res;
   } catch (e) { clearInterval(ti); $("#think-txt").textContent = "Something went wrong: " + e.message; busy = false; $("#run").disabled = false; return; }
@@ -238,6 +258,7 @@ async function playNumber() {
   await sleep(200);
   for (const d of box.children) { d.classList.add("in"); await sleep(120); }
   await sleep(300);
+  $("#num-note").textContent = data.kind === "number" ? "Number mode: your number is used exactly as typed." : "Each letter's code is mixed together into one number that fits in " + data.n + " bits.";
   await tween($("#bignum"), 0, data.x, 900);
   await sleep(500);
 }
@@ -287,8 +308,9 @@ function laneEl(m) {
 
 async function playRace() {
   show("#s-race");
-  const rate = data.rate;
-  $("#race-note").textContent = `Fair race: every method makes ${rate.toFixed(0)} tries per second, so the one that needs fewer tries wins. (The quantum ones are simulated on a normal computer, so their real computer time isn't a fair comparison. It's shown afterwards.)`;
+  const rate = data.rate, crack = data.mode === "crack";
+  $("#race-h").textContent = crack ? "3 · The race: who finds another password with your fingerprint?" : "3 · The race: who finds a twin first?";
+  $("#race-note").textContent = (crack ? `Exactly one other number out of ${fmt(data.N)} has your fingerprint. ` : "") + `Fair race: every method makes ${rate.toFixed(0)} tries per second, so the one that needs fewer tries wins. (The quantum ones are simulated on a normal computer, so their real computer time isn't a fair comparison. It's shown afterwards.)`;
   const box = $("#lanes");
   const lanes = data.methods.map(m => { const el = laneEl(m); box.appendChild(el); return {m, el, fin: false, lastAtt: -1}; });
   await sleep(500);
@@ -322,7 +344,16 @@ function finishLane({m, el}) {
   el.querySelector(".fillbar").style.width = "100%";
   el.querySelector(".status").textContent = m.attempts.length > 1 ? `Found a twin (${m.attempts.length} attempts)` : "Found a twin";
   const w = data.n - 1;
-  const r = el.querySelector(".result"); r.firstElementChild.innerHTML =
+  const r = el.querySelector(".result");
+  if (data.mode === "crack") {
+    const shown = data.kind === "text" && data.text_twin ? data.text_twin : String(m.twin);
+    r.firstElementChild.innerHTML =
+      `<div class="twins mono"><span>${esc(data.pw)}</span><span class="eq">=</span><span>${esc(shown)}</span></div>
+       <div class="twinline">${data.kind === "text" ? `"${esc(data.pw)}" becomes ${data.x} and "${esc(shown)}" becomes ${m.twin}` : `${data.x} and ${m.twin}`}: both scramble to <span class="mono">${bin(m.digest, w)}</span> ✓</div>
+       <div class="cpu">Actual computer time: ${m.cpu_ms < 1 ? m.cpu_ms.toFixed(2) : m.cpu_ms.toFixed(1)} ms</div>`;
+    r.classList.add("in"); return;
+  }
+  r.firstElementChild.innerHTML =
     `<div class="twins mono"><span>${m.pair[0]}</span><span class="eq">=</span><span>${m.pair[1]}</span></div>
      <div class="twinline">Two different numbers, same fingerprint <span class="mono">${bin(m.digest, w)}</span> ✓</div>
      <div class="cpu">Actual computer time: ${m.cpu_ms < 1 ? m.cpu_ms.toFixed(2) : m.cpu_ms.toFixed(1)} ms</div>`;
@@ -366,6 +397,22 @@ async function toggle(L) {
 
 const fmt = v => v.toLocaleString("en-US");
 function detailsHTML(id, d, m) {
+  if (id === "classical" && data.mode === "crack") return `
+    <p><b>How it works.</b> Exactly one other number among the ${fmt(data.N - 1)} others has your fingerprint. Normal guessing tries them in random order until it hits that one.</p>
+    <div class="facts"><div class="fact"><b>${m.total}</b><span>tries this run</span></div><div class="fact"><b>~${fmt(Math.round(data.N / 2))}</b><span>tries on average (about half of all numbers)</span></div></div>
+    <h3>What if it makes mistakes?</h3><p>A normal computer practically never flips a bit by accident, so there is nothing to simulate here.</p>`;
+  if (id === "grover") return `
+    <p><b>How it works.</b> Exactly one number among ${fmt(data.N)} has your fingerprint. A quantum search can't simply look at all of them, but it can nudge the odds a little at a time so the right number slowly becomes much likelier than the rest. After about ${d.j} nudges you look, and you almost certainly see it. That's roughly the square root of the number of options, instead of half of them.</p>
+    <div class="facts">
+      <div class="fact"><b>${d.j + 1}</b><span>tries per attempt (${d.j} search steps + 1 check)</span></div>
+      <div class="fact"><b>×${fmt(Math.round(d.classical / (d.j + 1)))}</b><span>fewer tries than average guessing</span></div>
+      <div class="fact"><b>${(d.p * 100).toFixed(1)}%</b><span>chance one attempt works</span></div>
+      <div class="fact"><b>${d.qubits}</b><span>quantum bits needed</span></div>
+      <div class="fact"><b>${fmt(d.total_gates)}</b><span>basic operations in the full program</span></div>
+      <div class="fact"><b>${fmt(d.total_cx)}</b><span>of those are the error-prone two-bit kind</span></div>
+    </div>
+    <p style="color:var(--mute);font-size:14px">Size comes from compiling one search step with Qiskit and multiplying by ${d.j} steps.</p>
+    <h3>What if the quantum computer makes mistakes?</h3><div class="noise"><div class="pulse">Simulating a noisy quantum computer…</div></div>`;
   if (id === "classical") return `
     <p><b>How it works.</b> Pick a random number, work out its fingerprint, write it down. Repeat. As soon as a fingerprint repeats, you hold a twin.</p>
     <div class="facts"><div class="fact"><b>${m.total}</b><span>tries this run</span></div><div class="fact"><b>~${Math.round(d.expected)}</b><span>tries on average</span></div><div class="fact"><b>√${fmt(data.N)}</b><span>rough rule: grows like the square root of the number of possible numbers</span></div></div>
@@ -395,8 +442,8 @@ function detailsHTML(id, d, m) {
 
 async function loadNoise(L, panel) {
   const id = L.m.id, slot = panel.querySelector(".noise");
-  const d = await fetch(`/api/noise?method=${id}&n=${data.n}&pw=${encodeURIComponent(data.pw)}`).then(r => r.json());
-  const c = COLORS[id], isB = id === "bht";
+  const d = await fetch(`/api/noise?method=${id}&n=${data.n}&kind=${data.kind}&pw=${encodeURIComponent(data.pw)}`).then(r => r.json());
+  const c = COLORS[id], isB = id === "bht" || id === "grover";
   const labels = isB ? d.steps : d.rounds;
   const intro = isB
     ? `Shown on a smaller ${d.n_sim}-bit version (a bigger one would take too long to simulate). Each operation has a small chance of going wrong. Pick how often:`

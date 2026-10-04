@@ -14,6 +14,7 @@ import threading
 import time
 from collections import OrderedDict
 from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 from flask import Flask, jsonify, request, send_from_directory
@@ -183,14 +184,47 @@ META = {
 }
 
 
+def prep(pw, n, kind):
+    """Turn the typed password into the number x that gets scrambled."""
+    if not pw or n not in SIZES:
+        return None, "type a password and pick a valid size"
+    if kind == "number":
+        if not pw.isdigit() or int(pw) >= (1 << n):
+            return None, f"Number mode: digits only, and below {1 << n:,} for {n} bits"
+        return int(pw), None
+    return fold(pw, n), None
+
+
+def codes_for(pw, kind):
+    return [int(c) for c in pw] if kind == "number" else list(pw.encode())
+
+
+def find_text_twin(t, n, pw, rng):
+    """A readable string (a-z, 0-9) that folds to number t, so it scrambles like the password."""
+    alpha = [ord(c) for c in "abcdefghijklmnopqrstuvwxyz0123456789"]
+    M = 1 << n
+    for _ in range(300000):
+        pre = [rng.choice(alpha) for _ in range(5)]
+        v = 0
+        for b in pre:
+            v = (v * 31 + b) % M
+        ok = [c for c in alpha if (v * 31 + c) % M == t]
+        if ok:
+            s = "".join(map(chr, pre + [rng.choice(ok)]))
+            if s != pw:
+                return s
+    return None
+
+
 @app.get("/api/run")
 def api_run():
     pw = (request.args.get("pw") or "")[:64]
     n = int(request.args.get("n", 16))
-    if not pw or n not in SIZES:
-        return jsonify(error="need a password and a valid size"), 400
+    kind = request.args.get("kind", "text")
+    x, err = prep(pw, n, kind)
+    if err:
+        return jsonify(error=err), 400
     H = get_hasher(pw, n)
-    x = fold(pw, n)
     tr = H.trace(x)
     rng = random.Random()
     methods = []
@@ -203,9 +237,68 @@ def api_run():
                             pair=[int(a), int(b)], digest=H.d[a]))
     expected = classical_cost(H.N)[1]
     return jsonify(
-        n=n, N=H.N, pw=pw, x=x, codes=list(pw.encode()),
+        mode="race", kind=kind, n=n, N=H.N, pw=pw, x=x, codes=codes_for(pw, kind),
         hash=dict(A=H.A, B=H.B, C=H.C, s=H.s, trace=tr),
         rate=max(12, expected / 5), methods=methods)
+
+
+# ---------------------------------------------------------------- crack mode (targeted twin)
+def crack_classical(H, x, rng):
+    target, order, t0 = H.d[x], list(range(H.N)), time.perf_counter()
+    rng.shuffle(order)
+    tries = 0
+    for y in order:
+        if y == x:
+            continue
+        tries += 1
+        if H.d[y] == target:
+            return y, [dict(tries=tries, ok=True, note="")], time.perf_counter() - t0
+    raise RuntimeError("no twin (hash is not 2-to-1?)")
+
+
+def crack_grover(H, x, rng):
+    N = H.N
+    th = math.asin(1 / math.sqrt(N))
+    j = max(0, round(math.pi / (4 * th) - 0.5))
+    marked = np.zeros(N, bool)
+    marked[H.partner[x]] = True
+    t0, attempts = time.perf_counter(), []
+    for _ in range(6):
+        psi = np.full(N, 1 / math.sqrt(N))
+        for _ in range(j):
+            psi[marked] *= -1
+            psi = 2 * psi.mean() - psi
+        p = float((psi[marked] ** 2).sum())
+        ok = rng.random() < p
+        attempts.append(dict(tries=j + 1, ok=ok, note=f"search chance was {p:.1%}"))
+        if ok:
+            return int(H.partner[x]), attempts, time.perf_counter() - t0
+    raise RuntimeError("quantum search failed 6 times")
+
+
+@app.get("/api/crack")
+def api_crack():
+    pw = (request.args.get("pw") or "")[:64]
+    n = int(request.args.get("n", 16))
+    kind = request.args.get("kind", "text")
+    x, err = prep(pw, n, kind)
+    if err:
+        return jsonify(error=err), 400
+    H = get_hasher(pw, n)
+    rng = random.Random()
+    methods = []
+    for mid, fn, nm, sub in (
+            ("classical", crack_classical, "Normal guessing", "Try numbers one by one until one has your fingerprint"),
+            ("grover", crack_grover, "Quantum search", "Let a quantum search home in on the one number that matches")):
+        t, attempts, cpu = fn(H, x, rng)
+        assert t != x and H.d[t] == H.d[x], "bad twin"
+        methods.append(dict(id=mid, name=nm, sub=sub, attempts=attempts, total=sum(a["tries"] for a in attempts),
+                            cpu_ms=cpu * 1000, twin=int(t), digest=H.d[x]))
+    twin = methods[0]["twin"]
+    text_twin = find_text_twin(twin, n, pw, rng) if kind == "text" else None
+    return jsonify(mode="crack", kind=kind, n=n, N=H.N, pw=pw, x=x, codes=codes_for(pw, kind),
+                   hash=dict(A=H.A, B=H.B, C=H.C, s=H.s, trace=H.trace(x)),
+                   rate=max(12, (H.N / 2) / 5), methods=methods, twin=twin, text_twin=text_twin)
 
 
 # ---------------------------------------------------------------- program size
@@ -233,6 +326,14 @@ def api_details():
     n = int(request.args.get("n", 16))
     N = 1 << n
     method = request.args.get("method")
+    if method == "grover":
+        th = math.asin(1 / math.sqrt(N))
+        j = max(0, round(math.pi / (4 * th) - 0.5))
+        g = gate_stats(n)
+        per = g["o"]["gates"] + g["d"]["gates"]
+        return jsonify(j=j, p=math.sin((2 * j + 1) * th) ** 2, qubits=n, per_step_gates=per,
+                       total_gates=j * per + n, total_cx=j * (g["o"]["cx"] + g["d"]["cx"]),
+                       classical=N / 2)
     if method == "bht":
         bp = bht_params(N)
         r, j = bp["r"], bp["j"]
@@ -257,24 +358,14 @@ RATES_Q = [0, 0.0005, 0.001, 0.002, 0.005]
 RATES_W = [0, 0.005, 0.01, 0.02, 0.05]
 
 
-def noise_bht(pw, n):
+def _noisy_grover(ns, marked, j0, J):
     from qiskit import transpile
     from qiskit_aer import AerSimulator
     from qiskit_aer.noise import NoiseModel, depolarizing_error
 
     from bht_collision import grover_circuit
 
-    ns = min(n, 6)  # full-size noisy circuits would take far too long to simulate
-    H = get_hasher(pw, ns)
-    bp = bht_params(1 << ns)
-    r, j0 = bp["r"], bp["j"]
-    rng = random.Random(pw)
-    table = rng.sample(range(H.N), r)
-    while len({H.d[x] for x in table}) < r:
-        table = rng.sample(range(H.N), r)
-    marked = sorted(int(H.partner[x]) for x in table)
-    th = math.asin(math.sqrt(len(marked) / H.N))
-    J = j0 + 3
+    th = math.asin(math.sqrt(len(marked) / (1 << ns)))
     basis = ["cx", "rz", "sx", "x"]
     circs = [transpile(grover_circuit(ns, marked, j), basis_gates=basis, optimization_level=0)
              for j in range(J + 1)]
@@ -291,10 +382,33 @@ def noise_bht(pw, n):
             counts = sim.run(qc, shots=shots, seed_simulator=7 + j).result().get_counts()
             out.append(sum(c for k, c in counts.items() if int(k, 2) in marked) / shots)
         noisy[str(rate)] = out
-    return dict(kind="bht", n_sim=ns, r=r, best=j0, steps=list(range(J + 1)),
+    return dict(kind="bht", n_sim=ns, best=j0, steps=list(range(J + 1)),
                 ideal=[math.sin((2 * j + 1) * th) ** 2 for j in range(J + 1)],
-                rates=RATES_Q, noisy=noisy,
-                cx_best=int(circs[j0].count_ops().get("cx", 0)))
+                rates=RATES_Q, noisy=noisy, cx_best=int(circs[j0].count_ops().get("cx", 0)))
+
+
+def noise_bht(pw, n):
+    ns = min(n, 6)  # full-size noisy circuits would take far too long to simulate
+    H = get_hasher(pw, ns)
+    bp = bht_params(1 << ns)
+    r, j0 = bp["r"], bp["j"]
+    rng = random.Random(pw)
+    table = rng.sample(range(H.N), r)
+    while len({H.d[x] for x in table}) < r:
+        table = rng.sample(range(H.N), r)
+    marked = sorted(int(H.partner[x]) for x in table)
+    out = _noisy_grover(ns, marked, j0, j0 + 3)
+    out["r"] = r
+    return out
+
+
+def noise_crack(pw, n, kind):
+    ns = min(n, 6)
+    H = get_hasher(pw, ns)
+    x = int(pw) % (1 << ns) if kind == "number" else fold(pw, ns)
+    th = math.asin(1 / math.sqrt(1 << ns))
+    j0 = max(0, round(math.pi / (4 * th) - 0.5))
+    return _noisy_grover(ns, [int(H.partner[x])], j0, j0 + 3)
 
 
 def noise_walk(n):
@@ -323,15 +437,22 @@ def api_noise():
     pw = (request.args.get("pw") or "")[:64]
     n = int(request.args.get("n", 16))
     method = request.args.get("method")
-    key = (method, pw, n if method == "walk" else min(n, 6))
+    kind = request.args.get("kind", "text")
+    key = (method, pw, kind, n if method == "walk" else min(n, 6))
     if key not in _noise_cache:
-        _noise_cache[key] = noise_bht(pw, n) if method == "bht" else noise_walk(n)
+        _noise_cache[key] = (noise_bht(pw, n) if method == "bht" else
+                             noise_crack(pw, n, kind) if method == "grover" else noise_walk(n))
     return jsonify(_noise_cache[key])
 
 
 @app.get("/")
 def index():
-    return send_from_directory("static", "index.html")
+    # works whether index.html sits in static/ or directly next to app.py
+    base = Path(__file__).resolve().parent
+    for d in (base / "static", base):
+        if (d / "index.html").exists():
+            return send_from_directory(d, "index.html")
+    return "index.html not found. Put it next to app.py or in a static/ folder.", 404
 
 
 if __name__ == "__main__":
