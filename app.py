@@ -8,7 +8,9 @@ Three methods then race to find two different numbers with the same fingerprint:
 Quantum parts are simulations on a normal computer (see README notes in the UI).
 """
 import hashlib
+import json
 import math
+import queue
 import random
 import threading
 import time
@@ -17,7 +19,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
 
 from qwalk import best_walk, best_walk_over_r, build_lumped
 from scaling import classical_cost
@@ -443,6 +445,291 @@ def api_noise():
         _noise_cache[key] = (noise_bht(pw, n) if method == "bht" else
                              noise_crack(pw, n, kind) if method == "grover" else noise_walk(n))
     return jsonify(_noise_cache[key])
+
+
+
+# ================================================================ LIVE RACE (server-sent events)
+# Each method runs in its own thread and really does its work: it computes fingerprints,
+# runs search steps, and reports its try count as it goes. Every hash call / search step is
+# held to the same tries-per-second rate so a human can watch (the work itself is real).
+class Abort(Exception):
+    pass
+
+
+class Pacer:
+    def __init__(self, mid, rate, emit, stop):
+        self.mid, self.rate, self.emit, self.stop = mid, rate, emit, stop
+        self.t0 = time.perf_counter()
+        self.tries, self.slept, self.last = 0, 0.0, 0.0
+        self.attempt, self.att0, self.planned = 1, 0, 1
+        self.phase, self.cur, self.p, self.log = "", None, None, []
+
+    def new_attempt(self, planned, phase):
+        self.att0, self.planned, self.phase, self.cur, self.p = self.tries, planned, phase, None, None
+        self.push(force=True)
+
+    def end_attempt(self, ok, note=""):
+        self.log.append(dict(tries=self.tries - self.att0, ok=ok, note=note))
+        self.push(force=True)
+        self.emit(dict(type="attempt_end", id=self.mid, ok=ok, att=self.attempt, tries=self.tries))
+        self.attempt += 1
+
+    def tick(self, k=1):
+        if self.stop.is_set():
+            raise Abort()
+        self.tries += k
+        ahead = self.t0 + self.tries / self.rate - time.perf_counter()
+        if ahead > 0.002:
+            time.sleep(ahead)
+            self.slept += ahead
+        self.push()
+
+    def push(self, force=False):
+        now = time.perf_counter()
+        if force or now - self.last > 0.035:
+            self.last = now
+            self.emit(dict(type="progress", id=self.mid, tries=self.tries, att=self.attempt,
+                           att_tries=self.tries - self.att0, planned=self.planned,
+                           phase=self.phase, cur=self.cur, p=self.p))
+
+    def elapsed(self):
+        return time.perf_counter() - self.t0
+
+    def cpu_ms(self):
+        return (self.elapsed() - self.slept) * 1000
+
+
+class AerGrover:
+    """Real Qiskit circuit, simulated on Aer: state after i search steps."""
+
+    def __init__(self, n, marked):
+        import qiskit_aer  # noqa: F401  (registers save_statevector)
+        from qiskit_aer import AerSimulator
+        self.n, self.marked, self.sim = n, marked, AerSimulator(method="statevector")
+
+    def probs(self, iters):
+        from bht_collision import grover_circuit
+        qc = grover_circuit(self.n, self.marked, iters, measure=False)
+        qc.save_statevector()
+        sv = self.sim.run(qc).result().get_statevector()
+        return np.abs(np.asarray(sv)) ** 2
+
+
+def grover_live(H, marked, j, pc, rng, engine):
+    """j live search steps (each one oracle call), then a measurement. Returns found x or None."""
+    N, mk = H.N, marked
+    psi = np.full(N, 1 / math.sqrt(N))
+    aer = AerGrover(H.n, [int(m) for m in np.flatnonzero(mk)]) if engine == "qiskit" else None
+    probs = psi ** 2
+    for i in range(1, j + 1):
+        if aer:
+            probs = aer.probs(i)
+        else:
+            psi[mk] *= -1
+            psi = 2 * psi.mean() - psi
+            probs = psi ** 2
+        pc.p, pc.cur = float(probs[mk].sum()), None
+        pc.phase = f"Quantum search step {i} of {j}"
+        pc.tick()
+    pc.phase, pc.cur = "Looking at the result", None
+    pc.tick()
+    probs = probs / probs.sum()
+    x = int(np.random.default_rng(rng.randrange(1 << 32)).choice(N, p=probs))
+    return x if mk[x] else None
+
+
+def live_classical_race(H, rng, pc, expected):
+    pc.new_attempt(expected, "Guessing numbers and writing down fingerprints")
+    seen, used = {}, set()
+    while True:
+        y = rng.randrange(H.N)
+        if y in used:
+            continue
+        used.add(y)
+        d = H.d[y]
+        pc.cur = [y, d]
+        pc.tick()
+        if d in seen:
+            pc.end_attempt(True)
+            return (seen[d], y)
+        seen[d] = y
+
+
+def live_bht(H, rng, pc, engine):
+    bp = bht_params(H.N)
+    r, j = bp["r"], bp["j"]
+    for _ in range(10):
+        pc.new_attempt(r + j + 1, "Writing down a short list")
+        table, seen, hit = rng.sample(range(H.N), r), {}, None
+        for x in table:
+            pc.cur = [x, H.d[x]]
+            pc.tick()
+            if H.d[x] in seen:
+                hit = (seen[H.d[x]], x)
+                break
+            seen[H.d[x]] = x
+        if hit:
+            pc.end_attempt(True, "two list entries already matched")
+            return hit
+        marked = np.zeros(H.N, bool)
+        marked[H.partner[table]] = True
+        x = grover_live(H, marked, j, pc, rng, engine)
+        pc.end_attempt(x is not None)
+        if x is not None:
+            return (x, int(H.partner[x]))
+    raise RuntimeError("quantum search failed 10 times")
+
+
+def live_walk(H, rng, pc):
+    w, L = walk_params(H.n)
+    r, t, K = w["r"], w["t"], w["K"]
+    D1, D2, mk, psi0 = L["D1"], L["D2"], L["marked"], L["psi0"]
+    O = np.where(mk, -1.0, 1.0)
+    for _ in range(10):
+        pc.new_attempt(r + 2 * t * K + 2, "Building a random list")
+        for _ in range(r):
+            x = rng.randrange(H.N)
+            pc.cur = [x, H.d[x]]
+            pc.tick()
+        v = psi0.copy()
+        pc.cur, pc.p = None, float((v[mk] ** 2).sum())
+        for k in range(1, K + 1):
+            v = v * O  # flag lists that contain a twin
+            for s in range(1, t + 1):
+                v = D2 @ (D1 @ v)  # one wandering step (swap one number in the list)
+                pc.p = float((v[mk] ** 2).sum())
+                pc.phase = f"Wandering: round {k} of {K}, step {s} of {t}"
+                pc.tick(2)
+        pc.phase = "Looking at the list"
+        pc.tick(2)
+        ok = rng.random() < float((v[mk] ** 2).sum())
+        pc.end_attempt(ok)
+        if ok:
+            x = rng.randrange(H.N)
+            return (x, int(H.partner[x]))
+    raise RuntimeError("walk failed 10 times")
+
+
+def live_crack_classical(H, x, rng, pc, expected):
+    pc.new_attempt(expected, "Trying numbers, checking each fingerprint")
+    order = list(range(H.N))
+    rng.shuffle(order)
+    for y in order:
+        if y == x:
+            continue
+        pc.cur = [y, H.d[y]]
+        pc.tick()
+        if H.d[y] == H.d[x]:
+            pc.end_attempt(True)
+            return y
+    raise RuntimeError("no twin found")
+
+
+def live_crack_grover(H, x, rng, pc, engine):
+    th = math.asin(1 / math.sqrt(H.N))
+    j = max(0, round(math.pi / (4 * th) - 0.5))
+    marked = np.zeros(H.N, bool)
+    marked[H.partner[x]] = True
+    for _ in range(10):
+        pc.new_attempt(j + 1, "Quantum search")
+        found = grover_live(H, marked, j, pc, rng, engine)
+        pc.end_attempt(found is not None)
+        if found is not None:
+            return found
+    raise RuntimeError("quantum search failed 10 times")
+
+
+def _sse(ev):
+    return f"data: {json.dumps(ev)}\n\n"
+
+
+def _meta(mode):
+    if mode == "crack":
+        return [dict(id="classical", name="Normal guessing", sub="Try numbers one by one until one has your fingerprint"),
+                dict(id="grover", name="Quantum search", sub="Let a quantum search home in on the one number that matches")]
+    return [dict(id=k, name=META[k][0], sub=META[k][1]) for k in ("classical", "bht", "walk")]
+
+
+def _rate(N, mode, speed=1.0):
+    return max(12, (N / 2 if mode == "crack" else classical_cost(N)[1]) / 5) * speed
+
+
+@app.get("/api/prepare")
+def api_prepare():
+    pw = (request.args.get("pw") or "")[:64]
+    n = int(request.args.get("n", 16))
+    kind, mode = request.args.get("kind", "text"), request.args.get("mode", "race")
+    speed = min(1.0, max(0.02, float(request.args.get("speed", 1))))
+    x, err = prep(pw, n, kind)
+    if err:
+        return jsonify(error=err), 400
+    H = get_hasher(pw, n)
+    if mode == "race":
+        walk_params(n)  # warm the cache so the live race starts instantly
+    return jsonify(mode=mode, kind=kind, n=n, N=H.N, pw=pw, x=x, codes=codes_for(pw, kind),
+                   hash=dict(A=H.A, B=H.B, C=H.C, s=H.s, trace=H.trace(x)),
+                   rate=_rate(H.N, mode, speed), methods=_meta(mode))
+
+
+@app.get("/api/stream")
+def api_stream():
+    pw = (request.args.get("pw") or "")[:64]
+    n = int(request.args.get("n", 16))
+    kind, mode = request.args.get("kind", "text"), request.args.get("mode", "race")
+    x, err = prep(pw, n, kind)
+    if err:
+        return jsonify(error=err), 400
+    H = get_hasher(pw, n)
+    engine = "qiskit" if request.args.get("engine") == "qiskit" and n <= 8 else "numpy"
+    speed = min(1.0, max(0.02, float(request.args.get("speed", 1))))
+    rate, stop, q = _rate(H.N, mode, speed), threading.Event(), queue.Queue()
+    expected = H.N / 2 if mode == "crack" else classical_cost(H.N)[1]
+    twin = int(H.partner[x]) if mode == "crack" else None
+    text_twin = find_text_twin(twin, n, pw, random.Random()) if mode == "crack" and kind == "text" else None
+    if mode == "race":
+        walk_params(n)
+
+    def work(mid):
+        pc, rng = Pacer(mid, rate, q.put, stop), random.Random()
+        try:
+            if mode == "race":
+                a, b = {"classical": lambda: live_classical_race(H, rng, pc, expected),
+                        "bht": lambda: live_bht(H, rng, pc, engine),
+                        "walk": lambda: live_walk(H, rng, pc)}[mid]()
+                assert a != b and H.d[a] == H.d[b], "bad twin"
+                res = dict(pair=[int(a), int(b)], digest=H.d[a])
+            else:
+                t = live_crack_classical(H, x, rng, pc, expected) if mid == "classical" \
+                    else live_crack_grover(H, x, rng, pc, engine)
+                assert t != x and H.d[t] == H.d[x], "bad twin"
+                res = dict(twin=int(t), digest=H.d[x], text_twin=text_twin)
+            q.put(dict(type="done", id=mid, total=pc.tries, attempts=pc.log, elapsed=pc.elapsed(),
+                       cpu_ms=pc.cpu_ms(), **res))
+        except Abort:
+            pass
+        except Exception as e:  # report instead of hanging the page
+            q.put(dict(type="error", id=mid, message=str(e)))
+
+    def gen():
+        threads = [threading.Thread(target=work, args=(m["id"],), daemon=True) for m in _meta(mode)]
+        try:
+            yield _sse(dict(type="start", engine=engine, rate=rate))
+            for t in threads:
+                t.start()
+            while True:
+                try:
+                    yield _sse(q.get(timeout=0.25))
+                except queue.Empty:
+                    if not any(t.is_alive() for t in threads):
+                        break
+            while not q.empty():
+                yield _sse(q.get_nowait())
+            yield _sse(dict(type="end"))
+        finally:
+            stop.set()
+
+    return Response(stream_with_context(gen()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/")

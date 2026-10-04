@@ -90,6 +90,15 @@ button:disabled{opacity:.4;cursor:not-allowed;transform:none}
 .stats{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:15px;color:var(--mute)}
 .stats b{color:var(--ink);font-variant-numeric:tabular-nums}
 .status{margin-left:auto;font-weight:600;color:var(--c)}
+.fillbar{transition:width .12s linear}
+.live{font-size:14px;color:var(--mute);min-height:22px;margin-top:8px}
+.live b{color:var(--ink)}
+.meter{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--mute);margin-top:6px}
+.meter.hidden{display:none}
+.mtrack{flex:1;height:8px;background:var(--soft);border-radius:99px;overflow:hidden}
+.mfill{height:100%;width:0;background:var(--c);opacity:.6;border-radius:99px;transition:width .12s linear}
+.meter b{color:var(--ink);width:40px;text-align:right;font-variant-numeric:tabular-nums}
+.lane.miss{border-color:#dc2626}
 .result{display:grid;grid-template-rows:0fr;transition:grid-template-rows .5s ease}
 .result.in{grid-template-rows:1fr}
 .result>div{overflow:hidden}
@@ -132,6 +141,8 @@ button:disabled{opacity:.4;cursor:not-allowed;transform:none}
   </div>
   <div class="chips" id="modes"><span class="lab">What to do</span></div>
   <div class="chips" id="kinds"><span class="lab">Password type</span></div>
+  <div class="chips" id="engines"><span class="lab">Quantum search runs on</span></div>
+  <div class="chips" id="speeds"><span class="lab">Speed</span></div>
   <div class="chips" id="sizes"><span class="lab">Number size (bits)</span></div>
   <p class="note" style="margin:2px 0 0">Bits = how big the numbers are. 4 bits means 16 possible numbers, 8 bits 256, 16 bits 65,536. Bigger means harder to search, and the quantum advantage grows.</p>
 
@@ -168,7 +179,7 @@ const frame = () => new Promise(r => requestAnimationFrame(r));
 const bin = (v, w) => v.toString(2).padStart(w, "0");
 const COLORS = {classical: "#f59e0b", bht: "#2563eb", grover: "#2563eb", walk: "#059669"};
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-let n = 16, busy = false, data = null, mode = "race", kind = "text";
+let n = 16, busy = false, data = null, mode = "race", kind = "text", engine = "numpy", speed = 1;
 
 // ---------- size chips
 [4, 6, 8, 10, 12, 14, 16].forEach(v => {
@@ -186,6 +197,8 @@ function chipRow(id, items, onPick) {
   });
 }
 chipRow("modes", [["race", "Find any twin pair (3 methods)"], ["crack", "Crack: find another password like mine (2 methods)"]], v => mode = v);
+chipRow("engines", [["numpy", "Fast simulation"], ["qiskit", "Real Qiskit circuits (up to 8 bits)"]], v => engine = v);
+chipRow("speeds", [["1", "Normal"], ["0.1", "Slow-mo (10× slower)"]], v => speed = parseFloat(v));
 chipRow("kinds", [["text", "Text"], ["number", "Number (PIN)"]], v => {
   kind = v; const p = $("#pw");
   p.placeholder = v === "number" ? "Type digits, e.g. 4821" : "Type any password";
@@ -239,7 +252,7 @@ async function start() {
   let mi = 0; const ti = setInterval(() => { $("#think-txt").textContent = msgs[++mi % msgs.length]; }, 700);
   $("#think-txt").textContent = msgs[0];
   try {
-    const [res] = await Promise.all([fetch(`/api/${mode === "crack" ? "crack" : "run"}?pw=${encodeURIComponent(pw)}&n=${n}&kind=${kind}`).then(r => r.json()), sleep(1800)]);
+    const [res] = await Promise.all([fetch(`/api/prepare?pw=${encodeURIComponent(pw)}&n=${n}&kind=${kind}&mode=${mode}&speed=${speed}`).then(r => r.json()), sleep(1800)]);
     if (res.error) throw new Error(res.error);
     data = res;
   } catch (e) { clearInterval(ti); $("#think-txt").textContent = "Something went wrong: " + e.message; busy = false; $("#run").disabled = false; return; }
@@ -300,7 +313,9 @@ function laneEl(m) {
   const el = document.createElement("div"); el.className = "lane"; el.dataset.id = m.id; el.style.setProperty("--c", COLORS[m.id]);
   el.innerHTML = `<div class="head"><span class="dot"></span><div><div class="nm">${m.name}</div><div class="sub">${m.sub}</div></div><span class="rank"></span><span class="chev">›</span></div>
   <div class="track"><div class="fillbar"></div></div>
-  <div class="stats"><span>Tries <b class="tries">0</b></span><span>Race time <b class="clock">0.00 s</b></span><span class="status">Searching…</span></div>
+  <div class="stats"><span>Tries <b class="tries">0</b></span><span>Race time <b class="clock">0.00 s</b></span><span>Attempt <b class="att">1</b></span><span class="status">Starting…</span></div>
+  <div class="live"></div>
+  <div class="meter hidden"><span>Chance of success if we looked now</span><div class="mtrack"><div class="mfill"></div></div><b class="mp">0%</b></div>
   <div class="result"><div></div></div>
   <div class="details"><div class="inner"><div class="panel"></div></div></div>`;
   return el;
@@ -308,55 +323,86 @@ function laneEl(m) {
 
 async function playRace() {
   show("#s-race");
-  const rate = data.rate, crack = data.mode === "crack";
+  const crack = data.mode === "crack";
   $("#race-h").textContent = crack ? "3 · The race: who finds another password with your fingerprint?" : "3 · The race: who finds a twin first?";
-  $("#race-note").textContent = (crack ? `Exactly one other number out of ${fmt(data.N)} has your fingerprint. ` : "") + `Fair race: every method makes ${rate.toFixed(0)} tries per second, so the one that needs fewer tries wins. (The quantum ones are simulated on a normal computer, so their real computer time isn't a fair comparison. It's shown afterwards.)`;
-  const box = $("#lanes");
-  const lanes = data.methods.map(m => { const el = laneEl(m); box.appendChild(el); return {m, el, fin: false, lastAtt: -1}; });
+  const box = $("#lanes"), lanes = {};
+  data.methods.forEach(m => { const el = laneEl(m); box.appendChild(el); lanes[m.id] = {m: {...m}, el, fin: false, hold: 0}; });
+  $("#race-note").textContent = "Starting the live run…";
   await sleep(500);
-  const t0 = performance.now();
+  const url = `/api/stream?pw=${encodeURIComponent(data.pw)}&n=${data.n}&kind=${data.kind}&mode=${data.mode}&engine=${engine}&speed=${speed}`;
+  const es = new EventSource(url), t0 = performance.now();
+  let running = true;
+  const clockLoop = now => {
+    if (!running) return;
+    const e = ((now - t0) / 1000).toFixed(2) + " s";
+    for (const L of Object.values(lanes)) if (!L.fin) L.el.querySelector(".clock").textContent = e;
+    requestAnimationFrame(clockLoop);
+  };
+  requestAnimationFrame(clockLoop);
   await new Promise(done => {
-    const loop = now => {
-      const e = (now - t0) / 1000; let all = true;
-      for (const L of lanes) {
-        const {m, el} = L, total = m.total, tt = total / rate;
-        const tries = Math.min(total, e * rate); let cum = 0, att = 0;
-        for (let i = 0; i < m.attempts.length; i++) { if (tries >= cum + m.attempts[i].tries && i < m.attempts.length - 1) { cum += m.attempts[i].tries; att = i + 1; } else { att = i; break; } }
-        const A = m.attempts[att], pct = Math.min(1, (tries - cum) / A.tries);
-        el.querySelector(".fillbar").style.width = (pct * 100) + "%";
-        el.querySelector(".tries").textContent = Math.floor(tries);
-        el.querySelector(".clock").textContent = Math.min(e, tt).toFixed(2) + " s";
-        const st = el.querySelector(".status");
-        if (!L.fin) st.textContent = att > 0 ? `Try again (attempt ${att + 1})` : "Searching…";
-        if (e >= tt && !L.fin) { L.fin = true; L.finTime = tt; finishLane(L); }
-        if (!L.fin) all = false;
-      }
-      all ? done() : requestAnimationFrame(loop);
+    es.onmessage = e => {
+      const ev = JSON.parse(e.data), L = lanes[ev.id];
+      if (ev.type === "start") {
+        const q = ev.engine === "qiskit" ? "real Qiskit circuits on Aer" : "a fast NumPy simulation";
+        const warn = engine === "qiskit" && ev.engine !== "qiskit" ? " (Qiskit circuits only run up to 8 bits, so this size uses the fast simulation)" : "";
+        $("#race-note").textContent = (crack ? `Exactly one other number out of ${fmt(data.N)} has your fingerprint. ` : "") +
+          `This is running live. Every number you see is real work happening now: fingerprints being computed and search steps being simulated. All methods are held to ${ev.rate.toFixed(0)} tries per second so you can watch, so the one needing fewer tries finishes first. Quantum search engine: ${q}${warn}.` + (crack ? "" : " The quantum wander always uses the NumPy simulation.");
+      } else if (ev.type === "progress" && !L.fin) onProgress(L, ev);
+      else if (ev.type === "attempt_end" && !ev.ok && !L.fin) {
+        L.hold = performance.now() + 1100; L.el.classList.add("miss");
+        L.el.querySelector(".status").textContent = "Missed. Quantum answers are a gamble. Starting over…";
+        L.el.querySelector(".live").textContent = "";
+        const f = L.el.querySelector(".fillbar"); f.style.transition = "none"; f.style.width = "0%"; void f.offsetWidth; f.style.transition = "";
+        setTimeout(() => L.el.classList.remove("miss"), 900);
+      } else if (ev.type === "done") {
+        L.fin = true; L.finTime = ev.elapsed; L.m = {...L.m, ...ev};
+        if (ev.text_twin) data.text_twin = ev.text_twin;
+        L.el.querySelector(".clock").textContent = ev.elapsed.toFixed(2) + " s";
+        L.el.querySelector(".tries").textContent = fmt(ev.total);
+        finishLane(L);
+      } else if (ev.type === "error") { L.el.querySelector(".status").textContent = "Error: " + ev.message; L.fin = true; L.m.total = 1e9; L.finTime = 1e9; }
+      else if (ev.type === "end") done();
     };
-    requestAnimationFrame(loop);
+    es.onerror = () => done();
   });
+  running = false; es.close();
+  data.methods = Object.values(lanes).map(L => L.m);
   await sleep(900);
-  await rankLanes(lanes);
+  await rankLanes(Object.values(lanes));
+}
+
+function onProgress(L, ev) {
+  const el = L.el;
+  el.querySelector(".tries").textContent = fmt(ev.tries);
+  el.querySelector(".att").textContent = ev.att;
+  el.querySelector(".fillbar").style.width = Math.min(97, ev.att_tries / ev.planned * 100) + "%";
+  if (performance.now() < L.hold) return;
+  el.querySelector(".status").textContent = ev.phase;
+  el.querySelector(".live").innerHTML = ev.cur ? `Now checking <b class="mono">${ev.cur[0]}</b> → <span class="mono">${bin(ev.cur[1], data.n - 1)}</span>` : "";
+  if (ev.p != null) {
+    el.querySelector(".meter").classList.remove("hidden");
+    el.querySelector(".mfill").style.width = (ev.p * 100) + "%";
+    el.querySelector(".mp").textContent = (ev.p * 100).toFixed(0) + "%";
+  }
 }
 
 function finishLane({m, el}) {
   el.classList.add("done");
   el.querySelector(".fillbar").style.width = "100%";
+  el.querySelector(".live").textContent = "";
   el.querySelector(".status").textContent = m.attempts.length > 1 ? `Found a twin (${m.attempts.length} attempts)` : "Found a twin";
-  const w = data.n - 1;
-  const r = el.querySelector(".result");
+  const w = data.n - 1, r = el.querySelector(".result");
+  const cpu = `<div class="cpu">Actual computer time (not counting the waiting that keeps the race watchable): ${m.cpu_ms < 1 ? m.cpu_ms.toFixed(2) : m.cpu_ms.toFixed(1)} ms</div>`;
   if (data.mode === "crack") {
     const shown = data.kind === "text" && data.text_twin ? data.text_twin : String(m.twin);
     r.firstElementChild.innerHTML =
       `<div class="twins mono"><span>${esc(data.pw)}</span><span class="eq">=</span><span>${esc(shown)}</span></div>
-       <div class="twinline">${data.kind === "text" ? `"${esc(data.pw)}" becomes ${data.x} and "${esc(shown)}" becomes ${m.twin}` : `${data.x} and ${m.twin}`}: both scramble to <span class="mono">${bin(m.digest, w)}</span> ✓</div>
-       <div class="cpu">Actual computer time: ${m.cpu_ms < 1 ? m.cpu_ms.toFixed(2) : m.cpu_ms.toFixed(1)} ms</div>`;
-    r.classList.add("in"); return;
+       <div class="twinline">${data.kind === "text" ? `"${esc(data.pw)}" becomes ${data.x} and "${esc(shown)}" becomes ${m.twin}` : `${data.x} and ${m.twin}`}: both scramble to <span class="mono">${bin(m.digest, w)}</span> ✓</div>` + cpu;
+  } else {
+    r.firstElementChild.innerHTML =
+      `<div class="twins mono"><span>${m.pair[0]}</span><span class="eq">=</span><span>${m.pair[1]}</span></div>
+       <div class="twinline">Two different numbers, same fingerprint <span class="mono">${bin(m.digest, w)}</span> ✓</div>` + cpu;
   }
-  r.firstElementChild.innerHTML =
-    `<div class="twins mono"><span>${m.pair[0]}</span><span class="eq">=</span><span>${m.pair[1]}</span></div>
-     <div class="twinline">Two different numbers, same fingerprint <span class="mono">${bin(m.digest, w)}</span> ✓</div>
-     <div class="cpu">Actual computer time: ${m.cpu_ms < 1 ? m.cpu_ms.toFixed(2) : m.cpu_ms.toFixed(1)} ms</div>`;
   r.classList.add("in");
 }
 

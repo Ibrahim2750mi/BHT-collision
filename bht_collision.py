@@ -50,8 +50,8 @@ def _mcz(qc, n):
     qc.h(n - 1)
 
 
-def grover_circuit(n, marked, iters):
-    qc = QuantumCircuit(n, n)
+def grover_circuit(n, marked, iters, measure=True):
+    qc = QuantumCircuit(n, n if measure else 0)
     qc.h(range(n))
     for _ in range(iters):
         for x in marked:  # phase oracle: -1 on each marked basis state
@@ -66,7 +66,8 @@ def grover_circuit(n, marked, iters):
         _mcz(qc, n)
         qc.x(range(n))
         qc.h(range(n))
-    qc.measure(range(n), range(n))
+    if measure:
+        qc.measure(range(n), range(n))
     return qc
 
 
