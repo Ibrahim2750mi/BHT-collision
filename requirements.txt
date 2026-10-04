@@ -1,0 +1,5 @@
+flask
+numpy
+qiskit
+qiskit-aer
+matplotlib
