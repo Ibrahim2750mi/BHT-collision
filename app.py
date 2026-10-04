@@ -684,6 +684,14 @@ def api_prepare():
                    rate=_rate(H.N, mode, speed), methods=_meta(mode))
 
 
+@app.get("/api/cost")
+def api_cost():
+    p = Path(__file__).resolve().parent / "cost_table.json"
+    if not p.exists():
+        return jsonify(error="cost_table.json missing. Run: python cost_report.py"), 404
+    return Response(p.read_text(), mimetype="application/json")
+
+
 @app.get("/api/trace")
 def api_trace():
     pw = (request.args.get("pw") or "")[:64]

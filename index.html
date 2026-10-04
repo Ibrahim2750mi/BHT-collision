@@ -144,15 +144,6 @@ button:disabled{opacity:.4;cursor:not-allowed;transform:none}
 .vt .fpv{font-weight:800;color:#7c3aed}
 .vcard{border:2px solid var(--ink);border-radius:14px;padding:14px 16px;margin-top:14px;overflow-x:auto}
 .vcard .ok{font-weight:800;color:var(--c)}
-.gate.menu{gap:10px;flex-wrap:wrap}
-.gate.menu button{background:#fff;color:var(--ink)}
-.tbl{display:block;overflow-x:auto;border-collapse:collapse;font-size:13px;margin:8px 0}
-.tbl th{color:var(--mute);font-weight:600;text-align:left;padding:5px 9px;white-space:nowrap;border-bottom:2px solid var(--ink);vertical-align:bottom}
-.tbl td{padding:6px 9px;border-top:1px solid var(--line);white-space:nowrap;font-variant-numeric:tabular-nums}
-.tbl td.win{font-weight:800;color:#059669}
-.tbl td.lose{color:#dc2626}
-.tools{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
-.tools button{padding:6px 12px;font-size:14px}
 </style>
 </head>
 <body>
@@ -163,7 +154,6 @@ button:disabled{opacity:.4;cursor:not-allowed;transform:none}
   <div class="controls">
     <input id="pw" type="text" placeholder="Type any password" value="hunter2" maxlength="40" autocomplete="off" spellcheck="false">
     <button class="go" id="run">Scramble &amp; race</button>
-    <button id="tbl">Saved runs</button>
   </div>
   <div class="chips" id="modes"><span class="lab">What to do</span></div>
   <div class="chips" id="kinds"><span class="lab">Password type</span></div>
@@ -205,11 +195,6 @@ button:disabled{opacity:.4;cursor:not-allowed;transform:none}
     <h2>4 · Check: scramble the answers again</h2>
     <p class="note" id="verify-note"></p>
     <div id="vbox"></div>
-  </section>
-  <div class="gate menu" id="g5"></div>
-  <section id="s-table" class="stage hidden">
-    <h2 id="table-h">5 · Table</h2>
-    <div id="tbox"></div>
   </section>
 </main>
 
@@ -298,7 +283,7 @@ async function start() {
   const pw = $("#pw").value.trim();
   if (!pw || busy) return;
   busy = true; $("#run").disabled = true;
-  ["#s-num", "#s-hash", "#s-race", "#s-verify", "#s-table"].forEach(hide); $("#g5").innerHTML = "";
+  ["#s-num", "#s-hash", "#s-race", "#s-verify"].forEach(hide);
   document.querySelectorAll(".stage").forEach(x => x.classList.remove("collapsed")); $("#vbox").innerHTML = "";
   $("#chars").innerHTML = ""; $("#steps").innerHTML = ""; $("#fp").innerHTML = ""; $("#fp").classList.remove("in");
   $("#lanes").innerHTML = ""; $("#final-note").textContent = "";
@@ -319,10 +304,8 @@ async function start() {
     await playHash();
     await gate("#g3", "Step 3 ▸ Start the race for a twin");
     await playRace();
-    saveRun();
     await gate("#g4", "Step 4 ▸ Check the answers by scrambling them again");
     await playVerify();
-    showMenu();
 
   } catch (e) { console.error(e); const t = $("#think-txt"); show("#s-think"); t.textContent = "Something broke: " + e.message; }
   busy = false; $("#run").disabled = false;
@@ -375,70 +358,6 @@ async function playHash() {
   fp.classList.add("in");
   await setBits(fb, tr[3], w - 1, 35);
   await sleep(700);
-}
-
-// ---------- saved runs (kept in this browser) + tables
-const KEY = "twinfinder_runs_v1";
-const loadRuns = () => { try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { return []; } };
-const storeRuns = r => { try { localStorage.setItem(KEY, JSON.stringify(r)); } catch (e) {} };
-function saveRun() {
-  const runs = loadRuns(), ms = {};
-  data.methods.forEach(m => ms[m.id] = {tries: m.total, attempts: (m.attempts || []).length, cpu_ms: m.cpu_ms, secs: m.elapsed});
-  runs.push({t: Date.now(), pw: data.pw, kind: data.kind, mode: data.mode, n: data.n, x: data.x, fp: data.hash.trace[3], engine, ms});
-  storeRuns(runs);
-}
-const sci = v => v == null ? "–" : v < 1e5 ? Math.round(v).toLocaleString("en-US") : v.toExponential(2).replace("e+", "e");
-const COLS = [["classical", "Normal guessing"], ["q", "Quantum search"], ["walk", "Quantum wander"]];
-const pick = (r, id) => id === "q" ? (r.ms.bht || r.ms.grover) : r.ms[id];
-function showSection(title, html) { $("#table-h").textContent = title; $("#tbox").innerHTML = html; show("#s-table"); $("#s-table").classList.remove("collapsed"); $("#s-table").scrollIntoView({behavior: "smooth", block: "start"}); }
-function showMenu() {
-  const g = $("#g5"); g.innerHTML = "";
-  [["Table of all my runs", showRuns], ["What it would really cost", showCost]].forEach(([l, f]) => { const b = document.createElement("button"); b.textContent = l; b.onclick = f; g.appendChild(b); });
-}
-$("#tbl").onclick = showRuns;
-function showRuns() {
-  const runs = loadRuns();
-  if (!runs.length) return showSection("5 · All my runs", "<p class='note'>No saved runs yet. Do a run first; every finished race is saved in this browser.</p>");
-  const groups = {};
-  runs.forEach(r => { const k = r.mode + "|" + r.n; (groups[k] = groups[k] || []).push(r); });
-  let sum = `<h3 style="margin:6px 0">Average number of tries, by size</h3><table class="tbl"><tr><th>Goal</th><th>Bits</th><th>Runs</th>${COLS.map(c => `<th>${c[1]}</th>`).join("")}</tr>`;
-  Object.keys(groups).sort((a, b) => { const [ma, na] = a.split("|"), [mb, nb] = b.split("|"); return ma.localeCompare(mb) || na - nb; }).forEach(k => {
-    const g = groups[k], [mode, n] = k.split("|");
-    sum += `<tr><td>${mode === "crack" ? "twin of my password" : "any twin"}</td><td>${n}</td><td>${g.length}</td>` + COLS.map(([id]) => {
-      const v = g.map(r => pick(r, id)).filter(Boolean).map(m => m.tries); return `<td>${v.length ? sci(v.reduce((a, b) => a + b, 0) / v.length) : "–"}</td>`; }).join("") + "</tr>";
-  });
-  sum += "</table>";
-  let det = `<h3 style="margin:14px 0 6px">Every run</h3><table class="tbl"><tr><th>#</th><th>When</th><th>Password</th><th>Goal</th><th>Bits</th><th>Its number</th><th>Its fingerprint</th>${COLS.map(c => `<th>${c[1]} (tries)</th>`).join("")}<th>Fewest tries</th></tr>`;
-  runs.forEach((r, i) => {
-    const vals = COLS.map(([id]) => pick(r, id)), best = Math.min(...vals.filter(Boolean).map(m => m.tries));
-    det += `<tr><td>${i + 1}</td><td>${new Date(r.t).toLocaleString()}</td><td class="mono">${esc(r.pw)}</td><td>${r.mode === "crack" ? "twin of mine" : "any twin"}</td><td>${r.n}</td><td class="mono">${r.x}</td><td class="mono">${r.fp}</td>` +
-      vals.map(m => m ? `<td class="${m.tries === best ? "win" : ""}">${sci(m.tries)}${m.attempts > 1 ? ` <span style="color:var(--mute)">(${m.attempts} attempts)</span>` : ""}</td>` : "<td>–</td>").join("") +
-      `<td>${COLS.filter(([id], j) => vals[j] && vals[j].tries === best).map(c => c[1]).join(", ")}</td></tr>`;
-  });
-  det += "</table>";
-  showSection("5 · All my runs", `<div class="tools"><button onclick="dlCsv()">Download as CSV</button><button onclick="if(confirm('Delete all saved runs?')){storeRuns([]);showRuns();}">Delete all runs</button></div>${sum}${det}<p class="note">Saved only in this browser. "Tries" are what each method counted, not seconds.</p>`);
-}
-function dlCsv() {
-  const rows = [["when", "password", "goal", "bits", "number", "fingerprint", "normal_tries", "quantum_search_tries", "quantum_wander_tries"]];
-  loadRuns().forEach(r => rows.push([new Date(r.t).toISOString(), r.pw, r.mode, r.n, r.x, r.fp, ...COLS.map(([id]) => (pick(r, id) || {}).tries ?? "")]));
-  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n")], {type: "text/csv"})); a.download = "twin_finder_runs.csv"; a.click();
-}
-async function showCost() {
-  showSection("5 · What it would really cost", "<div class='pulse'>Loading…</div>");
-  const d = await fetch("/api/cost").then(r => r.json());
-  if (d.error) return showSection("5 · What it would really cost", `<p class='note'>${esc(d.error)}</p>`);
-  const ok = d.verified.every(v => v.wrong === 0), cl = (r) => r < 1 ? "win" : "lose";
-  const A = d.rows.map(r => { const k = r.crack; return `<tr><td>${r.n}</td><td>${sci(k.classical_tries)}</td><td>${sci(k.classical_units)}</td><td>${sci(k.grover_steps)}</td><td>${sci(k.quantum_units)}</td><td class="${cl(k.ratio)}">${k.ratio.toExponential(1)}</td><td>${sci(1 / k.ratio)}×</td></tr>`; }).join("");
-  const B = d.rows.map(r => { const a = r.race, w = a.walk; return `<tr><td>${r.n}</td><td>${sci(a.classical_tries)}</td><td>${sci(a.classical_units)}</td><td>${a.bht_r} / ${sci(a.bht_steps)}</td><td>${sci(a.quantum_units)}</td><td class="${cl(a.ratio)}">${a.ratio.toFixed(2)}</td><td>${(1 / a.ratio).toFixed(1)}×</td><td>${w ? "≥ " + sci(w.quantum_units_lower_bound) : "–"}</td><td class="lose">${sci(a.query_optimal.quantum_units)}</td></tr>`; }).join("");
-  showSection("5 · What it would really cost", `
-  <p>Until now we counted <b>tries</b>. A real quantum computer has to <b>build the scrambler out of quantum parts</b> and run it every time. We built it (3n+1 qubits for n-bit numbers) and checked it against the Python scrambler on every possible input at 3, 4 and 5 bits: ${ok ? "<b>0 mistakes</b> ✓" : "<b>MISMATCH</b>"}. Then we counted its <b>hard steps</b>: gates touching 3 qubits at once, the expensive building block (1- and 2-qubit gates are cheap and not counted).</p>
-  <p>Both sides are charged in the same unit: a normal try costs one scrambler run. <b>Quantum ÷ Normal below 1 (green) means the quantum method needs fewer hard steps.</b> The last column is the reality check: quantum only wins if one of its hard steps is not more than that many times slower than a normal-computer step. Real quantum steps are probably thousands to millions of times slower.</p>
-  <h3 style="margin:14px 0 6px">Goal: find another password with <u>my</u> fingerprint</h3>
-  <table class="tbl"><tr><th>Bits</th><th>Normal: tries</th><th>Normal: hard steps</th><th>Quantum: search steps</th><th>Quantum: hard steps</th><th>Quantum ÷ Normal</th><th>Max slowdown it can afford</th></tr>${A}</table>
-  <h3 style="margin:14px 0 6px">Goal: find <u>any</u> two numbers with the same fingerprint</h3>
-  <table class="tbl"><tr><th>Bits</th><th>Normal: tries</th><th>Normal: hard steps</th><th>Quantum: list size / steps</th><th>Quantum: hard steps</th><th>Quantum ÷ Normal</th><th>Max slowdown it can afford</th><th>Quantum wander (at least)</th><th>Quantum search with the textbook list size</th></tr>${B}</table>
-  <p class="note"><b>Two findings.</b> (1) For "twin of my password", the quantum search wins hugely, and more at bigger sizes (the √ speed-up is real). (2) For "any twin", the famous cube-root speed-up <b>mostly disappears</b>: checking a long list costs real steps, so the cheapest list is short, and the gain shrinks to a small constant (about ${(1 / d.rows[d.rows.length - 1].race.ratio).toFixed(0)}× at the biggest size). The red column shows the cost if you use the textbook list size instead. "Quantum wander" is only a lower bound, because moving numbers around inside the walk is not counted.</p>
-  <p class="note">Method: adder-by-adder count of our own circuit (a cleverer design may shrink every number; we did not try). Error correction and the slowness of real quantum hardware are not included.</p>`);
 }
 
 // ---------- step 4: re-scramble the answers
