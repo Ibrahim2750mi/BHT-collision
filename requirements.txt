@@ -1,5 +1,7 @@
-flask
-numpy
-qiskit
-qiskit-aer
-matplotlib
+flask>=3.0
+numpy>=1.26
+matplotlib>=3.8
+qiskit>=2.0
+qiskit-aer>=0.15
+qiskit-ibm-runtime>=0.40
+# tested with: Python 3.12, qiskit 2.5.2, qiskit-aer 0.17.2, qiskit-ibm-runtime 0.50.0, flask 3.1.3, numpy 2.4.4
