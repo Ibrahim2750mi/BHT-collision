@@ -128,6 +128,21 @@ button:disabled{opacity:.4;cursor:not-allowed;transform:none}
 .legend{display:flex;gap:16px;font-size:13px;color:var(--mute);margin:6px 0}
 .legend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
 .sum{font-weight:600;margin-top:10px;min-height:48px}
+.gate{display:flex;justify-content:center;margin:26px 0 0}
+.gate button{font-weight:700;background:var(--ink);color:#fff;padding:12px 26px}
+.stage>h2{cursor:pointer;user-select:none}
+.stage>h2:after{content:" ▾";opacity:.5}
+.stage.collapsed>h2:after{content:" ▸"}
+.stage.collapsed>:not(h2){display:none}
+.glossary{background:var(--soft);border-radius:14px;padding:14px 18px;margin:22px 0 0;font-size:15px}
+.glossary b{font-weight:700}
+.vt{width:100%;border-collapse:collapse;font-size:14px;margin:8px 0}
+.vt th{color:var(--mute);font-weight:600;text-align:left;font-size:12px;padding:4px 8px}
+.vt td{padding:7px 8px;border-top:1px solid var(--line);font-variant-numeric:tabular-nums}
+.vt tr.me td{background:var(--soft)}
+.vt .fpv{font-weight:800;color:#7c3aed}
+.vcard{border:2px solid var(--ink);border-radius:14px;padding:14px 16px;margin-top:14px;overflow-x:auto}
+.vcard .ok{font-weight:800;color:var(--c)}
 </style>
 </head>
 <body>
@@ -158,17 +173,25 @@ button:disabled{opacity:.4;cursor:not-allowed;transform:none}
     <p class="note" id="num-note" style="margin:6px 0 0"></p>
   </section>
 
+  <div class="gate" id="g2"></div>
   <section id="s-hash" class="stage hidden">
     <h2>2 · The scrambler it goes through</h2>
     <div id="steps"></div>
     <div class="fp" id="fp"></div>
   </section>
 
+  <div class="gate" id="g3"></div>
   <section id="s-race" class="stage hidden">
     <h2 id="race-h">3 · The race: who finds a twin first?</h2>
     <p class="note" id="race-note"></p>
     <div id="lanes"></div>
     <p class="note" id="final-note"></p>
+  </section>
+<div class="gate" id="g4"></div>
+  <section id="s-verify" class="stage hidden">
+    <h2>4 · Check: scramble the answers again</h2>
+    <p class="note" id="verify-note"></p>
+    <div id="vbox"></div>
   </section>
 </main>
 
@@ -179,7 +202,7 @@ const frame = () => new Promise(r => requestAnimationFrame(r));
 const bin = (v, w) => v.toString(2).padStart(w, "0");
 const COLORS = {classical: "#f59e0b", bht: "#2563eb", grover: "#2563eb", walk: "#059669"};
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-let n = 16, busy = false, data = null, mode = "race", kind = "text", engine = "numpy", speed = 1;
+let n = 16, busy = false, data = null, mode = "race", kind = "text", engine = "qiskit", speed = 1;
 
 // ---------- size chips
 [4, 6, 8, 10, 12, 14, 16].forEach(v => {
@@ -197,7 +220,7 @@ function chipRow(id, items, onPick) {
   });
 }
 chipRow("modes", [["race", "Find any twin pair (3 methods)"], ["crack", "Crack: find another password like mine (2 methods)"]], v => mode = v);
-chipRow("engines", [["numpy", "Fast simulation"], ["qiskit", "Real Qiskit circuits (up to 8 bits)"]], v => engine = v);
+chipRow("engines", [["qiskit", "Real Qiskit circuits (Aer)"], ["numpy", "Fast NumPy shortcut (Grover only)"]], v => engine = v);
 chipRow("speeds", [["1", "Normal"], ["0.1", "Slow-mo (10× slower)"]], v => speed = parseFloat(v));
 chipRow("kinds", [["text", "Text"], ["number", "Number (PIN)"]], v => {
   kind = v; const p = $("#pw");
@@ -236,6 +259,19 @@ async function setBits(row, val, width, stagger = 22) {
   }
 }
 
+// ---------- step gating: each step waits for your click
+function gate(id, label) {
+  return new Promise(res => {
+    const g = $(id), b = document.createElement("button");
+    b.textContent = label; g.innerHTML = ""; g.appendChild(b);
+    b.onclick = () => { g.innerHTML = ""; res(); };
+    b.scrollIntoView({behavior: "smooth", block: "center"});
+  });
+}
+document.addEventListener("click", e => {
+  const h = e.target.closest(".stage > h2"); if (h) h.parentElement.classList.toggle("collapsed");
+});
+
 // ---------- main flow
 $("#run").onclick = start;
 $("#pw").addEventListener("keydown", e => { if (e.key === "Enter") start(); });
@@ -244,7 +280,8 @@ async function start() {
   const pw = $("#pw").value.trim();
   if (!pw || busy) return;
   busy = true; $("#run").disabled = true;
-  ["#s-num", "#s-hash", "#s-race"].forEach(hide);
+  ["#s-num", "#s-hash", "#s-race", "#s-verify"].forEach(hide);
+  document.querySelectorAll(".stage").forEach(x => x.classList.remove("collapsed")); $("#vbox").innerHTML = "";
   $("#chars").innerHTML = ""; $("#steps").innerHTML = ""; $("#fp").innerHTML = ""; $("#fp").classList.remove("in");
   $("#lanes").innerHTML = ""; $("#final-note").textContent = "";
   show("#s-think");
@@ -257,7 +294,14 @@ async function start() {
     data = res;
   } catch (e) { clearInterval(ti); $("#think-txt").textContent = "Something went wrong: " + e.message; busy = false; $("#run").disabled = false; return; }
   clearInterval(ti); hide("#s-think");
-  await playNumber(); await playHash(); await playRace();
+  await gate("#g1", "Step 1 ▸ Turn the password into a number");
+  await playNumber();
+  await gate("#g2", "Step 2 ▸ Run that number through the scrambler");
+  await playHash();
+  await gate("#g3", "Step 3 ▸ Start the race for a twin");
+  await playRace();
+  await gate("#g4", "Step 4 ▸ Check the answers by scrambling them again");
+  await playVerify();
   busy = false; $("#run").disabled = false;
 }
 
@@ -303,9 +347,35 @@ async function playHash() {
   fp.innerHTML = `<h2 style="margin-bottom:8px">Your fingerprint</h2>`; fp.appendChild(fb);
   const meta = document.createElement("div"); meta.className = "mono"; meta.style.marginTop = "8px";
   meta.textContent = `= ${tr[3]}  (hex ${tr[3].toString(16)})`; fp.appendChild(meta);
+  const sum = document.createElement("p"); sum.className = "note"; sum.style.margin = "10px 0 0";
+  sum.innerHTML = `So: <b>${esc(data.pw)}</b> → number <b class="mono">${data.x}</b> → fingerprint <b class="mono">${tr[3]}</b>. The number and the fingerprint are input and output of the scrambler. They are <b>not</b> a twin pair (a fingerprint has only ${w - 1} bits, so it cannot even be a ${w}-bit input).`; fp.appendChild(sum);
   fp.classList.add("in");
   await setBits(fb, tr[3], w - 1, 35);
   await sleep(700);
+}
+
+// ---------- step 4: re-scramble the answers
+async function playVerify() {
+  show("#s-verify");
+  const crack = data.mode === "crack", h = data.hash, w = data.n;
+  const pairs = data.methods.map(m => ({m, nums: crack ? [data.x, m.twin] : m.pair}));
+  const all = [data.x, ...pairs.flatMap(p => p.nums)].filter((v, i, a) => a.indexOf(v) === i);
+  const tr = (await fetch(`/api/trace?pw=${encodeURIComponent(data.pw)}&n=${w}&xs=${all.join(",")}`).then(r => r.json())).traces;
+  $("#verify-note").innerHTML = crack
+    ? `Crack mode looks for another number with the <b>same fingerprint as yours</b> (<span class="mono">${data.x}</span> → <span class="mono">${tr[data.x][3]}</span>). We now run each method's answer through the exact same scrambler (×${h.A} + ${h.C}, mix by ${h.s}, ×${h.B}, drop last bit). Equal last column = it works.`
+    : `Race mode does <b>not</b> look for a twin of your password's number. It looks for <b>any</b> two numbers that share a fingerprint, so the answers are unrelated to <span class="mono">${data.x}</span>. The top (grey) row is your own password for comparison: it has a different fingerprint. Each method's pair must land on one shared fingerprint.`;
+  const row = (label, v, cls = "") => { const t = tr[v];
+    return `<tr class="${cls}"><td>${label}</td><td class="mono"><b>${v}</b></td><td class="mono">${t[0]}</td><td class="mono">${t[1]}</td><td class="mono">${t[2]}</td><td class="mono fpv">${t[3]}</td><td class="mono">${bin(t[3], w - 1)}</td></tr>`; };
+  const head = `<tr><th></th><th>number</th><th>① ×${h.A}+${h.C}</th><th>② mix</th><th>③ ×${h.B}</th><th>④ fingerprint</th><th>fingerprint bits</th></tr>`;
+  const box = $("#vbox");
+  for (let i = 0; i < pairs.length; i++) {
+    const {m, nums} = pairs[i], same = tr[nums[0]][3] === tr[nums[1]][3] && nums[0] !== nums[1];
+    const c = document.createElement("div"); c.className = "vcard"; c.style.setProperty("--c", COLORS[m.id]);
+    c.innerHTML = `<b>${m.name}</b> found <span class="mono">${nums[0]}</span> and <span class="mono">${nums[1]}</span><table class="vt">${head}${row("your password", data.x, "me")}${row("answer A", nums[0])}${row("answer B", nums[1])}</table>
+      <div class="ok">${same ? `✓ different numbers, identical fingerprint ${tr[nums[0]][3]}` : "✗ not a twin (this should never happen)"}</div>`;
+    box.appendChild(c); c.scrollIntoView({behavior: "smooth", block: "center"});
+    if (i < pairs.length - 1) await gate("#g4", `Show the next method's check ▸`);
+  }
 }
 
 // ---------- race
@@ -343,10 +413,9 @@ async function playRace() {
     es.onmessage = e => {
       const ev = JSON.parse(e.data), L = lanes[ev.id];
       if (ev.type === "start") {
-        const q = ev.engine === "qiskit" ? "real Qiskit circuits on Aer" : "a fast NumPy simulation";
-        const warn = engine === "qiskit" && ev.engine !== "qiskit" ? " (Qiskit circuits only run up to 8 bits, so this size uses the fast simulation)" : "";
+        const q = ev.engine === "qiskit" ? "real Qiskit circuits on Aer" : "a NumPy shortcut"; const warn = "";
         $("#race-note").textContent = (crack ? `Exactly one other number out of ${fmt(data.N)} has your fingerprint. ` : "") +
-          `This is running live. Every number you see is real work happening now: fingerprints being computed and search steps being simulated. All methods are held to ${ev.rate.toFixed(0)} tries per second so you can watch, so the one needing fewer tries finishes first. Quantum search engine: ${q}${warn}.` + (crack ? "" : " The quantum wander always uses the NumPy simulation.");
+          `This is running live. Every number you see is real work happening now: fingerprints being computed and search steps being simulated. All methods are held to ${ev.rate.toFixed(0)} tries per second so you can watch, so the one needing fewer tries finishes first. Quantum search engine: ${q}${warn}.` + (crack ? "" : " The quantum wander is always a real Qiskit circuit.");
       } else if (ev.type === "progress" && !L.fin) onProgress(L, ev);
       else if (ev.type === "attempt_end" && !ev.ok && !L.fin) {
         L.hold = performance.now() + 1100; L.el.classList.add("miss");

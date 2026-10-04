@@ -500,30 +500,42 @@ class Pacer:
 
 
 class AerGrover:
-    """Real Qiskit circuit, simulated on Aer: state after i search steps."""
+    """Real Qiskit Grover circuit on Aer. One run returns the state after every search step."""
 
     def __init__(self, n, marked):
         import qiskit_aer  # noqa: F401  (registers save_statevector)
         from qiskit_aer import AerSimulator
         self.n, self.marked, self.sim = n, marked, AerSimulator(method="statevector")
 
-    def probs(self, iters):
-        from bht_collision import grover_circuit
-        qc = grover_circuit(self.n, self.marked, iters, measure=False)
-        qc.save_statevector()
-        sv = self.sim.run(qc).result().get_statevector()
-        return np.abs(np.asarray(sv)) ** 2
+    def all_probs(self, J):
+        from qiskit import QuantumCircuit, transpile
+        from qiskit.circuit.library import DiagonalGate
+        n = self.n
+        sign = np.ones(1 << n, complex)
+        sign[self.marked] = -1  # phase oracle: -1 on every marked basis state
+        orc = DiagonalGate(list(sign))
+        qc = QuantumCircuit(n)
+        qc.h(range(n))
+        for i in range(1, J + 1):
+            qc.append(orc, range(n))
+            qc.h(range(n)); qc.x(range(n)); qc.h(n - 1)  # diffusion = reflect about the mean
+            qc.mcx(list(range(n - 1)), n - 1)
+            qc.h(n - 1); qc.x(range(n)); qc.h(range(n))
+            qc.save_statevector(label=f"s{i}")
+        data = self.sim.run(transpile(qc, self.sim)).result().data()
+        return [np.abs(np.asarray(data[f"s{i}"])) ** 2 for i in range(1, J + 1)]
 
 
 def grover_live(H, marked, j, pc, rng, engine):
     """j live search steps (each one oracle call), then a measurement. Returns found x or None."""
     N, mk = H.N, marked
     psi = np.full(N, 1 / math.sqrt(N))
-    aer = AerGrover(H.n, [int(m) for m in np.flatnonzero(mk)]) if engine == "qiskit" else None
+    aer = AerGrover(H.n, [int(m) for m in np.flatnonzero(mk)]) if engine == "qiskit" and j > 0 else None
+    allp = aer.all_probs(j) if aer else None  # real Qiskit circuit, all steps in one run
     probs = psi ** 2
     for i in range(1, j + 1):
         if aer:
-            probs = aer.probs(i)
+            probs = allp[i - 1]
         else:
             psi[mk] *= -1
             psi = 2 * psi.mean() - psi
@@ -581,28 +593,29 @@ def live_bht(H, rng, pc, engine):
 
 
 def live_walk(H, rng, pc):
+    """Walk on a real Qiskit circuit. NOTE: the circuit works in the symmetry-reduced basis (qwalk.py,
+    checked against the full space), so it says WHETHER the final list holds a twin (measured on the
+    circuit) but not WHICH pair. Every pair is equally likely by symmetry, so we draw one uniformly."""
+    from qwalk_qiskit import measure_once, step_probs
     w, L = walk_params(H.n)
     r, t, K = w["r"], w["t"], w["K"]
-    D1, D2, mk, psi0 = L["D1"], L["D2"], L["marked"], L["psi0"]
-    O = np.where(mk, -1.0, 1.0)
+    mk, psi0 = L["marked"], L["psi0"]
+    grid = step_probs(L, t, K)
     for _ in range(10):
         pc.new_attempt(r + 2 * t * K + 2, "Building a random list")
         for _ in range(r):
             x = rng.randrange(H.N)
             pc.cur = [x, H.d[x]]
             pc.tick()
-        v = psi0.copy()
-        pc.cur, pc.p = None, float((v[mk] ** 2).sum())
+        pc.cur, pc.p = None, float((psi0[mk] ** 2).sum())
         for k in range(1, K + 1):
-            v = v * O  # flag lists that contain a twin
-            for s in range(1, t + 1):
-                v = D2 @ (D1 @ v)  # one wandering step (swap one number in the list)
-                pc.p = float((v[mk] ** 2).sum())
+            for s in range(1, t + 1):  # oracle flag, then one wandering step (D1 then D2 gates)
+                pc.p = grid[(k, s)]
                 pc.phase = f"Wandering: round {k} of {K}, step {s} of {t}"
                 pc.tick(2)
         pc.phase = "Looking at the list"
         pc.tick(2)
-        ok = rng.random() < float((v[mk] ** 2).sum())
+        ok = measure_once(L, t, K, rng.randrange(1 << 30))  # real measurement of the circuit
         pc.end_attempt(ok)
         if ok:
             x = rng.randrange(H.N)
@@ -671,6 +684,15 @@ def api_prepare():
                    rate=_rate(H.N, mode, speed), methods=_meta(mode))
 
 
+@app.get("/api/trace")
+def api_trace():
+    pw = (request.args.get("pw") or "")[:64]
+    n = int(request.args.get("n", 16))
+    H = get_hasher(pw, n)
+    xs = [int(v) for v in (request.args.get("xs") or "").split(",") if v.strip().isdigit() and int(v) < H.N]
+    return jsonify(traces={str(v): H.trace(v) for v in xs})
+
+
 @app.get("/api/stream")
 def api_stream():
     pw = (request.args.get("pw") or "")[:64]
@@ -680,7 +702,7 @@ def api_stream():
     if err:
         return jsonify(error=err), 400
     H = get_hasher(pw, n)
-    engine = "qiskit" if request.args.get("engine") == "qiskit" and n <= 8 else "numpy"
+    engine = "numpy" if request.args.get("engine") == "numpy" else "qiskit"
     speed = min(1.0, max(0.02, float(request.args.get("speed", 1))))
     rate, stop, q = _rate(H.N, mode, speed), threading.Event(), queue.Queue()
     expected = H.N / 2 if mode == "crack" else classical_cost(H.N)[1]
