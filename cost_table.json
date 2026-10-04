@@ -1,0 +1,260 @@
+{
+ "rows": [
+  {
+   "n": 4,
+   "N": 16.0,
+   "H": 28,
+   "qubits": 13,
+   "crack": {
+    "classical_tries": 8.0,
+    "classical_units": 224.0,
+    "grover_steps": 3,
+    "quantum_units": 192,
+    "ratio": 0.8571428571428571
+   },
+   "race": {
+    "classical_tries": 5.092152292152293,
+    "classical_units": 142.5802641802642,
+    "bht_r": 2,
+    "bht_steps": 1,
+    "quantum_units": 67,
+    "ratio": 0.4699107578822544,
+    "query_optimal": {
+     "r": 3,
+     "steps": 1,
+     "quantum_units": 70
+    },
+    "walk": {
+     "r": 3,
+     "t": 1,
+     "K": 2,
+     "quantum_units_lower_bound": 420,
+     "ratio": 2.9457092285156246
+    }
+   }
+  },
+  {
+   "n": 8,
+   "N": 256.0,
+   "H": 96,
+   "qubits": 25,
+   "crack": {
+    "classical_tries": 128.0,
+    "classical_units": 12288.0,
+    "grover_steps": 12,
+    "quantum_units": 2592,
+    "ratio": 0.2109375
+   },
+   "race": {
+    "classical_tries": 20.0726187457335,
+    "classical_units": 1926.971399590416,
+    "bht_r": 26,
+    "bht_steps": 1,
+    "quantum_units": 491,
+    "ratio": 0.25480398936090265,
+    "query_optimal": {
+     "r": 6,
+     "steps": 3,
+     "quantum_units": 813
+    },
+    "walk": {
+     "r": 6,
+     "t": 2,
+     "K": 2,
+     "quantum_units_lower_bound": 2496,
+     "ratio": 1.2952968583397413
+    }
+   }
+  },
+  {
+   "n": 12,
+   "N": 4096.0,
+   "H": 216,
+   "qubits": 37,
+   "crack": {
+    "classical_tries": 2048.0,
+    "classical_units": 442368.0,
+    "grover_steps": 50,
+    "quantum_units": 23600,
+    "ratio": 0.05334924768518518
+   },
+   "race": {
+    "classical_tries": 80.21700069589419,
+    "classical_units": 17326.872150313146,
+    "bht_r": 31,
+    "bht_steps": 5,
+    "quantum_units": 5210,
+    "ratio": 0.300689008079617,
+    "query_optimal": {
+     "r": 16,
+     "steps": 8,
+     "quantum_units": 6056
+    },
+    "walk": {
+     "r": 12,
+     "t": 3,
+     "K": 4,
+     "quantum_units_lower_bound": 13824,
+     "ratio": 0.7978358632807342
+    }
+   }
+  },
+  {
+   "n": 16,
+   "N": 65536.0,
+   "H": 282,
+   "qubits": 49,
+   "crack": {
+    "classical_tries": 32768.0,
+    "classical_units": 9240576.0,
+    "grover_steps": 201,
+    "quantum_units": 124620,
+    "ratio": 0.01348617229055851
+   },
+   "race": {
+    "classical_tries": 320.84964309465823,
+    "classical_units": 90479.59935269362,
+    "bht_r": 23,
+    "bht_steps": 25,
+    "quantum_units": 30350,
+    "ratio": 0.33543473022790815,
+    "query_optimal": {
+     "r": 40,
+     "steps": 19,
+     "quantum_units": 31787
+    },
+    "walk": {
+     "r": 30,
+     "t": 5,
+     "K": 6,
+     "quantum_units_lower_bound": 43428,
+     "ratio": 0.4799756001429191
+    }
+   }
+  },
+  {
+   "n": 24,
+   "N": 16777216.0,
+   "H": 690,
+   "qubits": 73,
+   "crack": {
+    "classical_tries": 8388608.0,
+    "classical_units": 5788139520.0,
+    "grover_steps": 3216,
+    "quantum_units": 4721088,
+    "ratio": 0.0008156486179517663
+   },
+   "race": {
+    "classical_tries": 5133.5747064442885,
+    "classical_units": 3542166.547446559,
+    "bht_r": 31,
+    "bht_steps": 351,
+    "quantum_units": 968058,
+    "ratio": 0.2732954498420871,
+    "query_optimal": {
+     "r": 256,
+     "steps": 122,
+     "quantum_units": 1516826
+    }
+   }
+  },
+  {
+   "n": 32,
+   "N": 4294967296.0,
+   "H": 1132,
+   "qubits": 97,
+   "crack": {
+    "classical_tries": 2147483648.0,
+    "classical_units": 2430951489536.0,
+    "grover_steps": 51471,
+    "quantum_units": 122706864,
+    "ratio": 5.04768871481764e-05
+   },
+   "race": {
+    "classical_tries": 82137.19530310862,
+    "classical_units": 92979305.08311896,
+    "bht_r": 39,
+    "bht_steps": 5013,
+    "quantum_units": 23190138,
+    "ratio": 0.24941182319301214,
+    "query_optimal": {
+     "r": 1625,
+     "steps": 777,
+     "quantum_units": 76301400
+    }
+   }
+  },
+  {
+   "n": 48,
+   "N": 281474976710656.0,
+   "H": 2856,
+   "qubits": 145,
+   "crack": {
+    "classical_tries": 140737488355328.0,
+    "classical_units": 4.019462667428168e+17,
+    "grover_steps": 13176794,
+    "quantum_units": 77690377424,
+    "ratio": 1.9328548080211375e-07
+   },
+   "race": {
+    "classical_tries": 21027121.997595806,
+    "classical_units": 60053460425.13362,
+    "bht_r": 64,
+    "bht_steps": 1001722,
+    "quantum_units": 11649025138,
+    "ratio": 0.19397758356527015,
+    "query_optimal": {
+     "r": 65536,
+     "steps": 31304,
+     "quantum_units": 186871763624
+    }
+   }
+  },
+  {
+   "n": 64,
+   "N": 1.8446744073709552e+19,
+   "H": 4290,
+   "qubits": 193,
+   "crack": {
+    "classical_tries": 9.223372036854776e+18,
+    "classical_units": 3.956826603810699e+22,
+    "grover_steps": 3373259426,
+    "quantum_units": 29779134212728,
+    "ratio": 7.526014454120538e-10
+   },
+   "race": {
+    "classical_tries": 5382943231.384526,
+    "classical_units": 23092826462639.617,
+    "bht_r": 70,
+    "bht_steps": 245204354,
+    "quantum_units": 4245713389510,
+    "ratio": 0.18385421101998337,
+    "query_optimal": {
+     "r": 2642246,
+     "steps": 1262091,
+     "quantum_units": 410185838757633
+    }
+   }
+  }
+ ],
+ "race_break_even_bits": 8,
+ "crack_break_even_bits": 4,
+ "verified": [
+  {
+   "n": 3,
+   "inputs": 8,
+   "wrong": 0
+  },
+  {
+   "n": 4,
+   "inputs": 16,
+   "wrong": 0
+  },
+  {
+   "n": 5,
+   "inputs": 32,
+   "wrong": 0
+  }
+ ],
+ "per_hash_note": "H = hard steps for one scrambler run"
+}
